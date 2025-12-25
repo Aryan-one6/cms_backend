@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, type ObjectCannedACL } from "@aws-sdk/client-s3";
 import path from "path";
 import fs from "fs/promises";
 
@@ -30,12 +30,13 @@ export async function uploadToS3(opts: { localPath: string; key: string; content
 
   const body = await fs.readFile(opts.localPath);
   const bucket = process.env.S3_BUCKET!;
+  const acl: ObjectCannedACL = (process.env.S3_ACL as ObjectCannedACL | undefined) ?? "public-read";
   const command = new PutObjectCommand({
     Bucket: bucket,
     Key: opts.key,
     Body: body,
     ContentType: opts.contentType,
-    ACL: process.env.S3_ACL || "public-read",
+    ACL: acl,
   });
   await client.send(command);
 

@@ -1,0 +1,17 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.sitesRouter = void 0;
+const express_1 = require("express");
+const auth_1 = require("../middlewares/auth");
+const site_1 = require("../middlewares/site");
+const sites_controller_1 = require("../controllers/sites.controller");
+exports.sitesRouter = (0, express_1.Router)();
+exports.sitesRouter.get("/admin/sites", auth_1.requireAuth, sites_controller_1.listSites);
+exports.sitesRouter.post("/admin/sites", auth_1.requireAuth, sites_controller_1.createSite);
+exports.sitesRouter.get("/admin/sites/:id/tokens", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.listTokens);
+exports.sitesRouter.post("/admin/sites/:id/tokens", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.createToken);
+exports.sitesRouter.delete("/admin/sites/:siteId/tokens/:tokenId", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.deleteToken);
+exports.sitesRouter.get("/admin/sites/:id/domains", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.listDomains);
+exports.sitesRouter.post("/admin/sites/:id/domains", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.addDomain);
+exports.sitesRouter.post("/admin/sites/:id/domains/:domainId/verify", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.verifyDomain);
+exports.sitesRouter.post("/admin/sites/:id/domains/:domainId/refresh-token", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.refreshDomainToken);
