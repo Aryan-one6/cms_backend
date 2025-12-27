@@ -24,11 +24,19 @@ export function getS3Client() {
   });
 }
 
-export async function uploadToS3(opts: { localPath: string; key: string; contentType: string }) {
+export async function uploadToS3(opts: { localPath?: string; fileBuffer?: Buffer; key: string; contentType: string }) {
   const client = getS3Client();
   if (!client) throw new Error("S3 not configured");
 
-  const body = await fs.readFile(opts.localPath);
+  let body: Buffer;
+  if (opts.fileBuffer) {
+    body = opts.fileBuffer;
+  } else if (opts.localPath) {
+    body = await fs.readFile(opts.localPath);
+  } else {
+    throw new Error("Upload failed: provide either localPath or fileBuffer");
+  }
+
   const bucket = process.env.S3_BUCKET!;
   const acl: ObjectCannedACL = (process.env.S3_ACL as ObjectCannedACL | undefined) ?? "public-read";
   const command = new PutObjectCommand({

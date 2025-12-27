@@ -6,6 +6,7 @@ import morgan from "morgan";
 import path from "path";
 import dotenv from "dotenv";
 import rateLimit from "express-rate-limit";
+import { hydrateVerifiedDomains, isOriginAllowed } from "./config/cors";
 
 dotenv.config();
 
@@ -19,6 +20,12 @@ const defaultCorsOrigins = [
   "http://127.0.0.1:5173",
   "http://localhost:5050",
 ];
+
+const staticCorsOrigins = (process.env.CORS_ORIGIN || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .concat(defaultCorsOrigins);
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -37,11 +44,11 @@ app.use(
 // CORS must be before static so uploads also send the headers
 app.use(
   cors({
-    origin: (process.env.CORS_ORIGIN || "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .concat(defaultCorsOrigins),
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true); // non-browser or same-origin
+      if (isOriginAllowed(origin, staticCorsOrigins)) return callback(null, true);
+      return callback(new Error("Not allowed by CORS"), false);
+    },
     credentials: true,
   })
 );
@@ -70,4 +77,9 @@ app.use((err: any, _req: any, res: any, _next: any) => {
 
 app.listen(port, () => {
   console.log(`CMS Backend running on http://localhost:${port}`);
+});
+
+// Preload verified domains into CORS allowlist on startup
+hydrateVerifiedDomains().catch((err) => {
+  console.error("Failed to hydrate verified domains for CORS", err);
 });

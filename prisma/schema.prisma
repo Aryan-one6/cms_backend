@@ -12,6 +12,11 @@ enum AdminRole {
   EDITOR
 }
 
+enum AdminStatus {
+  ACTIVE
+  SUSPENDED
+}
+
 enum SiteRole {
   OWNER
   EDITOR
@@ -21,6 +26,11 @@ enum SiteRole {
 enum ApiTokenRole {
   READ_ONLY
   READ_WRITE
+}
+
+enum SiteStatus {
+  ACTIVE
+  SUSPENDED
 }
 
 enum DomainStatus {
@@ -40,6 +50,7 @@ model AdminUser {
   email        String   @unique
   passwordHash String
   role         AdminRole @default(EDITOR)
+  status       AdminStatus @default(ACTIVE)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -102,6 +113,7 @@ model Site {
   name           String
   slug           String                 @unique
   domains        String[]
+  status         SiteStatus             @default(ACTIVE)
   defaultLocale  String?
   settingsJson   Json?
   createdAt      DateTime               @default(now())

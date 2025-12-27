@@ -5,7 +5,7 @@ dotenv.config();
 import { prisma } from "../config/prisma";
 
 async function main() {
-  const email = "admin@sapphirecms.com";
+  const email = "connect@triadflair.com";
   const password = "Admin@12345";
 
   const existing = await prisma.adminUser.findUnique({ where: { email } });

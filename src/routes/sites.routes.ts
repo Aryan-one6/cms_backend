@@ -10,7 +10,10 @@ import {
   addDomain,
   listDomains,
   verifyDomain,
+  verifyDomainHtml,
   refreshDomainToken,
+  deleteDomain,
+  deleteSite,
 } from "../controllers/sites.controller";
 
 export const sitesRouter = Router();
@@ -34,6 +37,19 @@ sitesRouter.post(
   requireSiteAccess,
   verifyDomain
 );
+sitesRouter.post(
+  "/admin/sites/:id/domains/:domainId/verify-html",
+  requireAuth,
+  requireSiteAccess,
+  verifyDomainHtml
+);
+sitesRouter.delete(
+  "/admin/sites/:id/domains/:domainId",
+  requireAuth,
+  requireSiteAccess,
+  deleteDomain
+);
+sitesRouter.delete("/admin/sites/:id", requireAuth, deleteSite);
 sitesRouter.post(
   "/admin/sites/:id/domains/:domainId/refresh-token",
   requireAuth,

@@ -8,6 +8,7 @@ import { SiteRole } from "@prisma/client";
 
 const createSchema = z.object({
   title: z.string().min(3),
+  slug: z.string().optional(),
   excerpt: z.string().optional(),
   coverImageUrl: z.string().optional(),
   contentHtml: z.string().min(1),
@@ -87,7 +88,8 @@ export async function adminCreatePost(req: Request, res: Response) {
     return res.status(403).json({ message: "You cannot create posts in this site" });
   }
 
-  const slug = await ensureUniqueSlug(parsed.data.title, site.siteId);
+  const slugInput = parsed.data.slug?.trim();
+  const slug = await ensureUniqueSlug(slugInput && slugInput.length ? slugInput : parsed.data.title, site.siteId);
 
   const post = await prisma.blogPost.create({
     data: {
@@ -103,7 +105,16 @@ export async function adminCreatePost(req: Request, res: Response) {
 
   // tags
   if (parsed.data.tags?.length) {
-    for (const t of parsed.data.tags) {
+    const uniqueTags = Array.from(
+      new Map(
+        parsed.data.tags
+          .map((t) => t?.trim())
+          .filter(Boolean)
+          .map((t) => [slugify(t!, { lower: true, strict: true }), t!])
+      ).values()
+    );
+
+    for (const t of uniqueTags) {
       const tagSlug = slugify(t, { lower: true, strict: true });
       const tag = await prisma.tag.upsert({
         where: { siteId_slug: { siteId: site.siteId, slug: tagSlug } },
@@ -131,10 +142,16 @@ export async function adminUpdatePost(req: Request, res: Response) {
     return res.status(403).json({ message: "You can only edit your own posts" });
   }
 
+  let nextSlug: string | undefined;
+  if (parsed.data.slug) {
+    nextSlug = await ensureUniqueSlug(parsed.data.slug, site.siteId);
+  }
+
   const post = await prisma.blogPost.update({
     where: { id: req.params.id },
     data: {
       title: parsed.data.title ?? undefined,
+      slug: nextSlug ?? undefined,
       excerpt: parsed.data.excerpt ?? undefined,
       coverImageUrl: parsed.data.coverImageUrl ?? undefined,
       contentHtml: parsed.data.contentHtml ?? undefined,
@@ -145,7 +162,16 @@ export async function adminUpdatePost(req: Request, res: Response) {
   if (parsed.data.tags) {
     await prisma.blogPostTag.deleteMany({ where: { postId: post.id } });
 
-    for (const t of parsed.data.tags) {
+    const uniqueTags = Array.from(
+      new Map(
+        parsed.data.tags
+          .map((t) => t?.trim())
+          .filter(Boolean)
+          .map((t) => [slugify(t!, { lower: true, strict: true }), t!])
+      ).values()
+    );
+
+    for (const t of uniqueTags) {
       const tagSlug = slugify(t, { lower: true, strict: true });
       const tag = await prisma.tag.upsert({
         where: { siteId_slug: { siteId: site.siteId, slug: tagSlug } },
@@ -341,7 +367,11 @@ export async function publicListPosts(req: Request, res: Response) {
         slug: true,
         excerpt: true,
         coverImageUrl: true,
+        contentHtml: true,
+        createdAt: true,
+        updatedAt: true,
         publishedAt: true,
+        author: { select: { id: true, name: true, email: true } },
         tags: { select: { tag: { select: { name: true, slug: true } } } },
       },
     }),
@@ -363,7 +393,10 @@ export async function publicGetPostBySlug(req: Request, res: Response) {
       excerpt: true,
       coverImageUrl: true,
       contentHtml: true,
+      createdAt: true,
+      updatedAt: true,
       publishedAt: true,
+      author: { select: { id: true, name: true, email: true } },
       tags: { select: { tag: { select: { name: true, slug: true } } } },
     },
   });
