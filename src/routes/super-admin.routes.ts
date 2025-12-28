@@ -18,16 +18,16 @@ export const superAdminRouter = Router();
 superAdminRouter.use(requireAuth, requireSuperAdmin);
 
 // Users
-superAdminRouter.get("/super-admin/users", listUsers);
-superAdminRouter.post("/super-admin/users", createUser);
-superAdminRouter.patch("/super-admin/users/:userId", updateUser);
-superAdminRouter.delete("/super-admin/users/:userId", deleteUser);
+superAdminRouter.get("/users", listUsers);
+superAdminRouter.post("/users", createUser);
+superAdminRouter.patch("/users/:userId", updateUser);
+superAdminRouter.delete("/users/:userId", deleteUser);
 
 // Sites
-superAdminRouter.get("/super-admin/sites", listSites);
-superAdminRouter.patch("/super-admin/sites/:siteId/status", updateSiteStatus);
-superAdminRouter.delete("/super-admin/sites/:siteId", deleteSiteSuper);
+superAdminRouter.get("/sites", listSites);
+superAdminRouter.patch("/sites/:siteId/status", updateSiteStatus);
+superAdminRouter.delete("/sites/:siteId", deleteSiteSuper);
 
 // Posts
-superAdminRouter.get("/super-admin/posts", listPosts);
-superAdminRouter.delete("/super-admin/posts/:postId", deletePostSuper);
+superAdminRouter.get("/posts", listPosts);
+superAdminRouter.delete("/posts/:postId", deletePostSuper);
