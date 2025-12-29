@@ -17,6 +17,140 @@ const createSchema = z.object({
 
 const updateSchema = createSchema.partial();
 
+const importPostSchema = z.object({
+  title: z.string().min(3),
+  slug: z.string().optional(),
+  excerpt: z.string().optional(),
+  coverImageUrl: z.string().optional(),
+  coverImageAbsolute: z.string().optional(),
+  contentHtml: z.string().min(1),
+  tags: z.array(z.string()).optional(),
+  status: z.enum(["DRAFT", "PUBLISHED"]).optional(),
+  publishedAt: z.string().datetime().optional(),
+});
+
+const importSchema = z.object({
+  posts: z.array(importPostSchema).min(1, "No posts provided"),
+});
+
+function stringifyCsvField(value: any) {
+  const str = value == null ? "" : String(value);
+  if (/[",\n]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
+  return str;
+}
+
+function postsToCsv(rows: any[]) {
+  const headers = [
+    "title",
+    "slug",
+    "excerpt",
+    "coverImageUrl",
+    "contentHtml",
+    "tags",
+    "status",
+    "publishedAt",
+  ];
+  const lines = [
+    headers.join(","),
+    ...rows.map((row) =>
+      headers
+        .map((h) => {
+          if (h === "tags" && Array.isArray(row.tags)) return stringifyCsvField(row.tags.join("|"));
+          return stringifyCsvField(row[h]);
+        })
+        .join(",")
+    ),
+  ];
+  return lines.join("\n");
+}
+
+function parseCsvPosts(csvText: string) {
+  const rows: string[][] = [];
+  let current = "";
+  let field: string[] = [];
+  let inQuotes = false;
+
+  const pushField = () => {
+    field.push(current.replace(/""/g, '"'));
+    current = "";
+  };
+  const pushRow = () => {
+    rows.push(field);
+    field = [];
+  };
+
+  for (let i = 0; i < csvText.length; i++) {
+    const ch = csvText[i];
+    if (ch === '"') {
+      if (inQuotes && csvText[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === "," && !inQuotes) {
+      pushField();
+    } else if ((ch === "\n" || ch === "\r") && !inQuotes) {
+      if (ch === "\r" && csvText[i + 1] === "\n") i++;
+      pushField();
+      pushRow();
+    } else {
+      current += ch;
+    }
+  }
+  pushField();
+  pushRow();
+
+  const [headerRow, ...dataRows] = rows.filter((r) => r.length && r.some((c) => c.trim().length));
+  if (!headerRow) return [];
+  const headers = headerRow.map((h) => h.trim().toLowerCase());
+
+  return dataRows
+    .map((cols) => {
+      const obj: any = {};
+      headers.forEach((h, idx) => {
+        const val = cols[idx] ?? "";
+        obj[h] = val.trim();
+      });
+      return obj;
+    })
+    .filter((o) => Object.keys(o).length > 0);
+}
+
+function normalizeImportPost(input: any) {
+  if (!input || typeof input !== "object") return null;
+  const get = (keys: string[]) => {
+    for (const k of keys) {
+      const val = (input as any)[k];
+      if (val !== undefined && val !== null && String(val).trim().length) return String(val).trim();
+    }
+    return undefined;
+  };
+
+  const title = get(["title", "Title"]);
+  if (!title) return null;
+
+  const tagsRaw = get(["tags", "Tags"]);
+  const tags = tagsRaw
+    ? tagsRaw.split(/[,|;]/).map((t) => t.trim()).filter(Boolean)
+    : undefined;
+
+  const status = get(["status", "Status"]);
+  const publishedAt = get(["publishedAt", "PublishedAt", "published_at"]);
+
+  return {
+    title,
+    slug: get(["slug", "Slug"]),
+    excerpt: get(["excerpt", "Excerpt"]),
+    coverImageUrl: get(["coverImageUrl", "cover_image_url", "CoverImageUrl"]),
+    coverImageAbsolute: get(["coverImageAbsolute", "cover_image_absolute", "CoverImageAbsolute"]),
+    contentHtml: get(["contentHtml", "content_html", "ContentHtml"]) || "<p></p>",
+    tags,
+    status,
+    publishedAt,
+  };
+}
+
 async function ensureUniqueSlug(base: string, siteId: string) {
   let slug = slugify(base, { lower: true, strict: true });
   let i = 1;
@@ -198,6 +332,160 @@ export async function adminDeletePost(req: Request, res: Response) {
 
   await prisma.blogPost.delete({ where: { id: req.params.id } });
   res.json({ ok: true });
+}
+
+export async function adminExportPosts(req: Request, res: Response) {
+  const site = (req as any).site as SiteContext | undefined;
+  if (!site) return res.status(400).json({ message: "Site context missing" });
+
+  const origin = process.env.APP_ORIGIN || `${req.protocol}://${req.get("host") || "localhost"}`;
+
+  const posts = await prisma.blogPost.findMany({
+    where: { siteId: site.siteId },
+    orderBy: { updatedAt: "desc" },
+    include: { tags: { include: { tag: true } } },
+  });
+
+  const siteInfo = await prisma.site.findUnique({
+    where: { id: site.siteId },
+    select: { name: true, slug: true, domains: true },
+  });
+  const domainLabel =
+    siteInfo?.domains?.[0] ||
+    siteInfo?.slug ||
+    siteInfo?.name?.replace(/\s+/g, "-").toLowerCase() ||
+    "site";
+
+  const payload = posts.map((p) => ({
+    title: p.title,
+    slug: p.slug,
+    excerpt: p.excerpt,
+    coverImageUrl: p.coverImageUrl,
+    coverImageAbsolute:
+      p.coverImageUrl && !/^https?:\/\//i.test(p.coverImageUrl)
+        ? `${origin}${p.coverImageUrl}`
+        : p.coverImageUrl,
+    contentHtml: p.contentHtml,
+    tags: p.tags.map((t) => t.tag.name),
+    status: p.status,
+    publishedAt: p.publishedAt,
+    createdAt: p.createdAt,
+    updatedAt: p.updatedAt,
+  }));
+
+  if (req.query.format === "csv") {
+    const csv = postsToCsv(payload);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="${domainLabel}-posts.csv"`);
+    return res.send(csv);
+  }
+
+  res.json({ posts: payload, filename: `${domainLabel}-posts.json` });
+}
+
+export async function adminImportPosts(req: Request, res: Response) {
+  const auth = (req as any).auth as JwtPayload;
+  const site = (req as any).site as SiteContext | undefined;
+  if (!site) return res.status(400).json({ message: "Site context missing" });
+  if (!ensureCanMutateSite(auth, site.membershipRole)) {
+    return res.status(403).json({ message: "You cannot import posts in this site" });
+  }
+
+  const parsePostsPayload = (input: any) => {
+    if (!input) return undefined;
+    if (Array.isArray(input)) return input;
+    if (typeof input === "string") {
+      const trimmed = input.trim();
+      if (!trimmed.length) return undefined;
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          return Array.isArray(parsed) ? parsed : parsed.posts;
+        } catch {
+          return undefined;
+        }
+      }
+      return parseCsvPosts(trimmed);
+    }
+    if (typeof input === "object") {
+      if (Array.isArray(input.posts)) return input.posts;
+      if (typeof input.posts === "string") {
+        const maybe = parsePostsPayload(input.posts);
+        if (Array.isArray(maybe)) return maybe;
+      }
+      if (input.csv && typeof input.csv === "string") {
+        return parseCsvPosts(input.csv);
+      }
+    }
+    return undefined;
+  };
+
+  const incomingPostsRaw = parsePostsPayload(req.body);
+  const incomingPosts = (incomingPostsRaw || []).map((p: any) => normalizeImportPost(p)).filter(Boolean);
+
+  if (!incomingPosts.length) {
+    return res.status(400).json({ message: "Invalid import payload. Provide JSON or CSV with posts array." });
+  }
+
+  const parsed = importSchema.safeParse({ posts: incomingPosts });
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+
+  const created = [];
+
+  for (const data of parsed.data.posts) {
+    const slugInput = data.slug?.trim();
+    const slug = await ensureUniqueSlug(slugInput && slugInput.length ? slugInput : data.title, site.siteId);
+    const status = data.status === "PUBLISHED" ? "PUBLISHED" : "DRAFT";
+    const publishedAt = status === "PUBLISHED" ? (data.publishedAt ? new Date(data.publishedAt) : new Date()) : null;
+
+    const post = await prisma.blogPost.create({
+      data: {
+        siteId: site.siteId,
+        title: data.title,
+        slug,
+        excerpt: data.excerpt,
+        coverImageUrl: data.coverImageUrl || data.coverImageAbsolute,
+        contentHtml: data.contentHtml,
+        authorId: auth.adminId,
+        status,
+        publishedAt,
+      },
+    });
+
+    if (data.tags?.length) {
+      const uniqueTags = Array.from(
+        new Map(
+          data.tags
+            .map((t) => t?.trim())
+            .filter(Boolean)
+            .map((t) => [slugify(t!, { lower: true, strict: true }), t!])
+        ).values()
+      );
+
+      for (const t of uniqueTags) {
+        const tagSlug = slugify(t, { lower: true, strict: true });
+        const tag = await prisma.tag.upsert({
+          where: { siteId_slug: { siteId: site.siteId, slug: tagSlug } },
+          update: { name: t },
+          create: { siteId: site.siteId, name: t, slug: tagSlug },
+        });
+        await prisma.blogPostTag.create({ data: { postId: post.id, tagId: tag.id } });
+      }
+    }
+
+    created.push({
+      id: post.id,
+      slug: post.slug,
+      title: post.title,
+      status: post.status,
+      excerpt: post.excerpt,
+      coverImageUrl: post.coverImageUrl,
+      contentHtml: post.contentHtml,
+      tags: data.tags ?? [],
+    });
+  }
+
+  res.json({ imported: created.length, posts: created });
 }
 
 export async function adminDashboard(req: Request, res: Response) {
