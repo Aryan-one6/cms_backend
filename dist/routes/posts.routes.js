@@ -12,9 +12,11 @@ exports.postsRouter.get("/public/posts/:slug", site_1.requirePublicSiteToken, po
 // admin
 exports.postsRouter.get("/admin/dashboard", auth_1.requireAuth, site_1.requireSiteAccess, posts_controller_1.adminDashboard);
 exports.postsRouter.get("/admin/posts", auth_1.requireAuth, site_1.requireSiteAccess, posts_controller_1.adminListPosts);
+exports.postsRouter.get("/admin/posts/export", auth_1.requireAuth, site_1.requireSiteAccess, posts_controller_1.adminExportPosts);
 exports.postsRouter.get("/admin/posts/:id", auth_1.requireAuth, site_1.requireSiteAccess, posts_controller_1.adminGetPost);
 exports.postsRouter.post("/admin/posts", auth_1.requireAuth, site_1.requireSiteAccess, posts_controller_1.adminCreatePost);
 exports.postsRouter.put("/admin/posts/:id", auth_1.requireAuth, site_1.requireSiteAccess, posts_controller_1.adminUpdatePost);
 exports.postsRouter.delete("/admin/posts/:id", auth_1.requireAuth, site_1.requireSiteAccess, posts_controller_1.adminDeletePost);
 exports.postsRouter.post("/admin/posts/:id/publish", auth_1.requireAuth, site_1.requireSiteAccess, posts_controller_1.publishPost);
 exports.postsRouter.post("/admin/posts/:id/unpublish", auth_1.requireAuth, site_1.requireSiteAccess, posts_controller_1.unpublishPost);
+exports.postsRouter.post("/admin/posts/import", auth_1.requireAuth, site_1.requireSiteAccess, (0, express_1.text)({ type: ["text/csv", "text/plain"] }), posts_controller_1.adminImportPosts);

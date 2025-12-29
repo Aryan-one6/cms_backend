@@ -30,7 +30,16 @@ async function uploadToS3(opts) {
     const client = getS3Client();
     if (!client)
         throw new Error("S3 not configured");
-    const body = await promises_1.default.readFile(opts.localPath);
+    let body;
+    if (opts.fileBuffer) {
+        body = opts.fileBuffer;
+    }
+    else if (opts.localPath) {
+        body = await promises_1.default.readFile(opts.localPath);
+    }
+    else {
+        throw new Error("Upload failed: provide either localPath or fileBuffer");
+    }
     const bucket = process.env.S3_BUCKET;
     const acl = process.env.S3_ACL ?? "public-read";
     const command = new client_s3_1.PutObjectCommand({

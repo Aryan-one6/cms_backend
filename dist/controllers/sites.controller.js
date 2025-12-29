@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -12,12 +45,16 @@ exports.listDomains = listDomains;
 exports.addDomain = addDomain;
 exports.refreshDomainToken = refreshDomainToken;
 exports.verifyDomain = verifyDomain;
+exports.verifyDomainHtml = verifyDomainHtml;
+exports.deleteDomain = deleteDomain;
+exports.deleteSite = deleteSite;
 const zod_1 = require("zod");
 const slugify_1 = __importDefault(require("slugify"));
 const crypto_1 = __importDefault(require("crypto"));
 const prisma_1 = require("../config/prisma");
 const client_1 = require("@prisma/client");
 const promises_1 = __importDefault(require("dns/promises"));
+const axios_1 = __importDefault(require("axios"));
 const createSiteSchema = zod_1.z.object({
     name: zod_1.z.string().min(2),
     domains: zod_1.z.array(zod_1.z.string()).optional(),
@@ -77,12 +114,15 @@ async function createSite(req, res) {
     const parsed = createSiteSchema.safeParse(req.body);
     if (!parsed.success)
         return res.status(400).json(parsed.error.flatten());
+    const firstDomain = parsed.data.domains && parsed.data.domains.length > 0
+        ? normalizeDomain(parsed.data.domains[0])
+        : undefined;
     const slug = await ensureUniqueSiteSlug(parsed.data.name);
     const site = await prisma_1.prisma.site.create({
         data: {
             name: parsed.data.name,
             slug,
-            domains: parsed.data.domains ?? [],
+            domains: firstDomain ? [firstDomain] : [],
             defaultLocale: parsed.data.defaultLocale,
             settingsJson: parsed.data.settingsJson === undefined ? undefined : parsed.data.settingsJson,
         },
@@ -90,6 +130,17 @@ async function createSite(req, res) {
     await prisma_1.prisma.adminSiteMembership.create({
         data: { adminId: auth.adminId, siteId: site.id, role: client_1.SiteRole.OWNER },
     });
+    // Create a domain record immediately if provided (single primary domain per site)
+    if (firstDomain) {
+        await prisma_1.prisma.siteDomain.create({
+            data: {
+                siteId: site.id,
+                domain: firstDomain,
+                verificationToken: generateDomainToken(),
+                status: "PENDING",
+            },
+        });
+    }
     res.status(201).json({ site: { ...site, membershipRole: client_1.SiteRole.OWNER } });
 }
 async function listTokens(req, res) {
@@ -125,6 +176,14 @@ async function createToken(req, res) {
     const parsed = createTokenSchema.safeParse(req.body);
     if (!parsed.success)
         return res.status(400).json(parsed.error.flatten());
+    const existingToken = await prisma_1.prisma.apiToken.findFirst({
+        where: { siteId: site.siteId },
+    });
+    if (existingToken) {
+        return res
+            .status(400)
+            .json({ message: "This site already has a token. Delete the existing token to create a new one." });
+    }
     const plain = generatePlainToken();
     const hashed = hashToken(plain);
     const expiresAt = parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : null;
@@ -189,26 +248,33 @@ async function addDomain(req, res) {
     if (!parsed.success)
         return res.status(400).json(parsed.error.flatten());
     const domain = normalizeDomain(parsed.data.domain);
-    const token = generateDomainToken();
-    const record = await prisma_1.prisma.siteDomain.upsert({
+    // Enforce single primary domain per site
+    const existingDomain = await prisma_1.prisma.siteDomain.findFirst({ where: { siteId: site.siteId } });
+    if (existingDomain && existingDomain.domain !== domain) {
+        return res.status(400).json({ message: "A site can have only one domain. Delete the current domain first." });
+    }
+    // Keep the same token once generated for this domain until it is deleted.
+    const existing = await prisma_1.prisma.siteDomain.findUnique({
         where: { siteId_domain: { siteId: site.siteId, domain } },
-        update: { verificationToken: token, status: "PENDING" },
-        create: {
-            siteId: site.siteId,
-            domain,
-            verificationToken: token,
-            status: "PENDING",
-        },
     });
+    const record = existing ??
+        (await prisma_1.prisma.siteDomain.create({
+            data: {
+                siteId: site.siteId,
+                domain,
+                verificationToken: generateDomainToken(),
+                status: "PENDING",
+            },
+        }));
     // keep domains array in sync for backwards compatibility
-    await prisma_1.prisma.site.update({
+    await prisma_1.prisma.site
+        .update({
         where: { id: site.siteId },
         data: {
-            domains: {
-                push: domain,
-            },
+            domains: [domain],
         },
-    }).catch(() => {
+    })
+        .catch(() => {
         /* ignore array sync errors */
     });
     res.status(201).json({ domain: record });
@@ -224,11 +290,8 @@ async function refreshDomainToken(req, res) {
     const domain = await prisma_1.prisma.siteDomain.findUnique({ where: { id: req.params.domainId } });
     if (!domain || domain.siteId !== site.siteId)
         return res.status(404).json({ message: "Not found" });
-    const updated = await prisma_1.prisma.siteDomain.update({
-        where: { id: domain.id },
-        data: { verificationToken: generateDomainToken(), status: "PENDING", verifiedAt: null },
-    });
-    res.json({ domain: updated });
+    // Tokens stay fixed per domain; do not rotate. Return current record.
+    res.json({ domain });
 }
 async function verifyDomain(req, res) {
     const auth = req.auth;
@@ -268,5 +331,125 @@ async function verifyDomain(req, res) {
         where: { id: domain.id },
         data: { status: "VERIFIED", verifiedAt: new Date() },
     });
+    // Allow this domain (and its subdomains) via CORS without manual env edits
+    try {
+        const { addVerifiedDomain } = await Promise.resolve().then(() => __importStar(require("../config/cors")));
+        addVerifiedDomain(domain.domain);
+    }
+    catch (err) {
+        console.error("Failed to add verified domain to CORS allowlist", err);
+    }
     res.json({ domain: updated });
+}
+// HTML file verification fallback: expects a file at
+// https://<domain>/.well-known/sapphire-site-verification.txt
+// containing the verification token.
+async function verifyDomainHtml(req, res) {
+    const auth = req.auth;
+    const site = req.site;
+    if (!site)
+        return res.status(400).json({ message: "Site context missing" });
+    if (auth.role !== "SUPER_ADMIN" && site.membershipRole !== client_1.SiteRole.OWNER) {
+        return res.status(403).json({ message: "Only owners can verify domains" });
+    }
+    const domain = await prisma_1.prisma.siteDomain.findUnique({ where: { id: req.params.domainId } });
+    if (!domain || domain.siteId !== site.siteId)
+        return res.status(404).json({ message: "Not found" });
+    const urls = [
+        `https://${domain.domain}/.well-known/sapphire-site-verification.txt`,
+        `http://${domain.domain}/.well-known/sapphire-site-verification.txt`,
+    ];
+    let matched = false;
+    let lastError = null;
+    for (const url of urls) {
+        try {
+            const resp = await axios_1.default.get(url, { timeout: 5000 });
+            const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
+            if (body.includes(domain.verificationToken)) {
+                matched = true;
+                break;
+            }
+            lastError = `Token not found at ${url}`;
+        }
+        catch (err) {
+            lastError = err?.message || `Request failed for ${url}`;
+        }
+    }
+    if (!matched) {
+        await prisma_1.prisma.siteDomain.update({
+            where: { id: domain.id },
+            data: { status: "FAILED" },
+        });
+        return res.status(400).json({
+            message: lastError || "Verification token not found in HTML file",
+            expectedPath: "/.well-known/sapphire-site-verification.txt",
+            expectedContent: domain.verificationToken,
+        });
+    }
+    const updated = await prisma_1.prisma.siteDomain.update({
+        where: { id: domain.id },
+        data: { status: "VERIFIED", verifiedAt: new Date() },
+    });
+    // Allow this domain (and its subdomains) via CORS without manual env edits
+    try {
+        const { addVerifiedDomain } = await Promise.resolve().then(() => __importStar(require("../config/cors")));
+        addVerifiedDomain(domain.domain);
+    }
+    catch (err) {
+        console.error("Failed to add verified domain to CORS allowlist", err);
+    }
+    res.json({ domain: updated });
+}
+async function deleteDomain(req, res) {
+    const auth = req.auth;
+    const site = req.site;
+    if (!site)
+        return res.status(400).json({ message: "Site context missing" });
+    if (auth.role !== "SUPER_ADMIN" && site.membershipRole !== client_1.SiteRole.OWNER) {
+        return res.status(403).json({ message: "Only owners can manage domains" });
+    }
+    const domain = await prisma_1.prisma.siteDomain.findUnique({ where: { id: req.params.domainId } });
+    if (!domain || domain.siteId !== site.siteId)
+        return res.status(404).json({ message: "Not found" });
+    // Sync domains array by removing the deleted domain
+    const siteRecord = await prisma_1.prisma.site.findUnique({
+        where: { id: site.siteId },
+        select: { domains: true },
+    });
+    const currentDomains = siteRecord?.domains ?? [];
+    const filteredDomains = currentDomains.filter((d) => d !== domain.domain);
+    await prisma_1.prisma.$transaction([
+        prisma_1.prisma.siteDomain.delete({ where: { id: domain.id } }),
+        prisma_1.prisma.site.update({
+            where: { id: site.siteId },
+            data: { domains: filteredDomains },
+        }),
+    ]);
+    return res.json({ ok: true });
+}
+async function deleteSite(req, res) {
+    const auth = req.auth;
+    const siteId = req.params.id;
+    if (!siteId)
+        return res.status(400).json({ message: "Missing site id" });
+    const membership = await prisma_1.prisma.adminSiteMembership.findFirst({
+        where: { siteId, adminId: auth.adminId },
+    });
+    const isSuperAdmin = auth.role === "SUPER_ADMIN";
+    if (!membership && !isSuperAdmin) {
+        return res.status(403).json({ message: "You do not have access to this site" });
+    }
+    if (!isSuperAdmin && membership?.role !== client_1.SiteRole.OWNER) {
+        return res.status(403).json({ message: "Only owners can delete a site" });
+    }
+    await prisma_1.prisma.$transaction([
+        prisma_1.prisma.blogPostTag.deleteMany({ where: { post: { siteId } } }),
+        prisma_1.prisma.blogPost.deleteMany({ where: { siteId } }),
+        prisma_1.prisma.tag.deleteMany({ where: { siteId } }),
+        prisma_1.prisma.apiToken.deleteMany({ where: { siteId } }),
+        prisma_1.prisma.siteDomain.deleteMany({ where: { siteId } }),
+        prisma_1.prisma.adminSiteMembership.deleteMany({ where: { siteId } }),
+        prisma_1.prisma.site.delete({ where: { id: siteId } }),
+    ]);
+    return res.json({ ok: true });
 }

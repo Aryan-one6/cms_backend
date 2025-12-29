@@ -391,7 +391,7 @@ export async function adminImportPosts(req: Request, res: Response) {
     return res.status(403).json({ message: "You cannot import posts in this site" });
   }
 
-  const parsePostsPayload = (input: any) => {
+  const parsePostsPayload = (input: any): any[] | undefined => {
     if (!input) return undefined;
     if (Array.isArray(input)) return input;
     if (typeof input === "string") {

@@ -14,4 +14,7 @@ exports.sitesRouter.delete("/admin/sites/:siteId/tokens/:tokenId", auth_1.requir
 exports.sitesRouter.get("/admin/sites/:id/domains", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.listDomains);
 exports.sitesRouter.post("/admin/sites/:id/domains", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.addDomain);
 exports.sitesRouter.post("/admin/sites/:id/domains/:domainId/verify", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.verifyDomain);
+exports.sitesRouter.post("/admin/sites/:id/domains/:domainId/verify-html", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.verifyDomainHtml);
+exports.sitesRouter.delete("/admin/sites/:id/domains/:domainId", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.deleteDomain);
+exports.sitesRouter.delete("/admin/sites/:id", auth_1.requireAuth, sites_controller_1.deleteSite);
 exports.sitesRouter.post("/admin/sites/:id/domains/:domainId/refresh-token", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.refreshDomainToken);
