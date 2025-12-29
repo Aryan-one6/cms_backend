@@ -62,6 +62,21 @@ function getJwtConfig() {
   return { jwtSecret, expiresIn };
 }
 
+function getCookieOptions() {
+  const sameSiteEnv = (process.env.COOKIE_SAMESITE || "").toLowerCase();
+  const sameSite = (sameSiteEnv === "none" ? "none" : sameSiteEnv === "lax" ? "lax" : undefined) as
+    | "lax"
+    | "none"
+    | undefined;
+  const useNone = sameSite === "none";
+  return {
+    httpOnly: true,
+    sameSite: useNone ? "none" : "lax",
+    secure: useNone || process.env.NODE_ENV === "production",
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  } as const;
+}
+
 export async function login(req: Request, res: Response) {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json(parsed.error.flatten());
@@ -84,12 +99,7 @@ export async function login(req: Request, res: Response) {
   );
 
   // cookie-based auth (best for admin panel)
-  res.cookie("accessToken", token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  });
+  res.cookie("accessToken", token, getCookieOptions());
 
   return res.json({
     admin: { id: admin.id, name: admin.name, email: admin.email, role: admin.role },
@@ -114,12 +124,7 @@ export async function signup(req: Request, res: Response) {
   const { jwtSecret, expiresIn } = getJwtConfig();
   const token = jwt.sign({ adminId: admin.id, role: admin.role }, jwtSecret, { expiresIn });
 
-  res.cookie("accessToken", token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  });
+  res.cookie("accessToken", token, getCookieOptions());
 
   return res.status(201).json({
     admin: { id: admin.id, name: admin.name, email: admin.email, role: admin.role },
@@ -136,7 +141,8 @@ export async function me(req: Request, res: Response) {
 }
 
 export async function logout(_req: Request, res: Response) {
-  res.clearCookie("accessToken");
+  const opts = getCookieOptions();
+  res.clearCookie("accessToken", opts);
   return res.json({ ok: true });
 }
 
