@@ -6,11 +6,12 @@ import morgan from "morgan";
 import rateLimit from "express-rate-limit";
 import { apiRouter } from "./routes";
 import { hydrateVerifiedDomains, isOriginAllowed } from "./config/cors";
+import path from "path";
 
 const app = express();
 
 const defaultCorsOrigins = [
-  "http://localhost:5173",
+  "http://localhost:5174",
   "http://127.0.0.1:5173",
   "http://localhost:5050",
 ];
@@ -52,6 +53,9 @@ app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// Serve locally stored uploads when S3 is not configured
+app.use("/uploads", express.static(path.resolve(__dirname, "../uploads")));
 
 app.use("/api", apiRouter);
 

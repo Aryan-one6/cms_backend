@@ -2,7 +2,7 @@ import { S3Client, PutObjectCommand, type ObjectCannedACL } from "@aws-sdk/clien
 import path from "path";
 import fs from "fs/promises";
 
-type UploadResult = { url: string };
+type UploadResult = { url: string; absoluteUrl: string; storage: "s3" | "local" };
 
 function hasS3Env() {
   return Boolean(
@@ -26,7 +26,14 @@ export function getS3Client() {
 
 export async function uploadToS3(opts: { localPath?: string; fileBuffer?: Buffer; key: string; contentType: string }) {
   const client = getS3Client();
-  if (!client) throw new Error("S3 not configured");
+  if (!client) {
+    const filename = path.basename(opts.key);
+    const relative = `/uploads/${filename}`;
+    const baseOrigin =
+      process.env.APP_ORIGIN?.replace(/\/+$/, "") || `http://localhost:${process.env.PORT || 5050}`;
+    const absolute = `${baseOrigin}${relative}`;
+    return { url: relative, absoluteUrl: absolute, storage: "local" } satisfies UploadResult;
+  }
 
   let body: Buffer;
   if (opts.fileBuffer) {
@@ -38,19 +45,23 @@ export async function uploadToS3(opts: { localPath?: string; fileBuffer?: Buffer
   }
 
   const bucket = process.env.S3_BUCKET!;
-  const acl: ObjectCannedACL = (process.env.S3_ACL as ObjectCannedACL | undefined) ?? "public-read";
-  const command = new PutObjectCommand({
-    Bucket: bucket,
-    Key: opts.key,
-    Body: body,
-    ContentType: opts.contentType,
-    ACL: acl,
-  });
+  const aclEnv = (process.env.S3_ACL || "").trim().toLowerCase();
+  const acl: ObjectCannedACL | undefined =
+    !aclEnv || aclEnv === "none" || aclEnv === "skip" ? undefined : (aclEnv as ObjectCannedACL);
+  const command = new PutObjectCommand(
+    {
+      Bucket: bucket,
+      Key: opts.key,
+      Body: body,
+      ContentType: opts.contentType,
+      ...(acl ? { ACL: acl } : {}), // Skip ACL if bucket blocks public ACLs
+    } as any
+  );
   await client.send(command);
 
   const base = process.env.S3_CDN_BASE || `https://${bucket}.s3.${process.env.S3_REGION}.amazonaws.com`;
   const url = `${base.replace(/\/$/, "")}/${opts.key}`;
-  return { url } as UploadResult;
+  return { url, absoluteUrl: url, storage: "s3" } as UploadResult;
 }
 
 export function buildLocalUrl(filename: string, reqOrigin: string) {

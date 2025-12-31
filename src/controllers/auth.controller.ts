@@ -7,6 +7,7 @@ import { sendMail } from "../utils/mailer";
 import crypto from "crypto";
 import slugify from "slugify";
 import { SiteRole } from "@prisma/client";
+import { randomBytes } from "crypto";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -17,6 +18,8 @@ const signupSchema = z.object({
   name: z.string().min(2),
   email: z.string().email(),
   password: z.string().min(6),
+  siteName: z.string().min(2),
+  domain: z.string().min(3),
 });
 
 const resetRequestSchema = z.object({
@@ -30,7 +33,14 @@ const resetConfirmSchema = z.object({
 
 async function ensureDefaultSite(adminId: string, adminName: string) {
   const existingSite = await prisma.adminSiteMembership.findFirst({ where: { adminId } });
-  if (existingSite) return;
+  if (existingSite) {
+    // Ensure primary is set if missing
+    const admin = await prisma.adminUser.findUnique({ where: { id: adminId }, select: { primarySiteId: true } });
+    if (!admin?.primarySiteId) {
+      await prisma.adminUser.update({ where: { id: adminId }, data: { primarySiteId: existingSite.siteId } });
+    }
+    return;
+  }
 
   let base = adminName || "Main Site";
   if (base.length < 3) base = "site";
@@ -50,6 +60,15 @@ async function ensureDefaultSite(adminId: string, adminName: string) {
   await prisma.adminSiteMembership.create({
     data: { adminId, siteId: site.id, role: SiteRole.OWNER },
   });
+  await prisma.adminUser.update({ where: { id: adminId }, data: { primarySiteId: site.id } });
+}
+
+function normalizeDomain(domain: string) {
+  return domain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+}
+
+function generateDomainToken() {
+  return randomBytes(16).toString("hex");
 }
 
 function getJwtConfig() {
@@ -110,7 +129,7 @@ export async function signup(req: Request, res: Response) {
   const parsed = signupSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json(parsed.error.flatten());
 
-  const { name, email, password } = parsed.data;
+  const { name, email, password, siteName, domain } = parsed.data;
   const existing = await prisma.adminUser.findUnique({ where: { email } });
   if (existing) return res.status(400).json({ message: "Email already in use" });
 
@@ -119,7 +138,35 @@ export async function signup(req: Request, res: Response) {
     data: { name, email, passwordHash, role: "EDITOR" },
   });
 
-  await ensureDefaultSite(admin.id, admin.name);
+  // Create primary site using provided info
+  let slug = slugify(siteName, { lower: true, strict: true });
+  let i = 1;
+  while (true) {
+    const exists = await prisma.site.findUnique({ where: { slug } });
+    if (!exists) break;
+    slug = `${slugify(siteName, { lower: true, strict: true })}-${i++}`;
+  }
+  const primaryDomain = normalizeDomain(domain);
+  const site = await prisma.site.create({
+    data: { name: siteName, slug, domains: primaryDomain ? [primaryDomain] : [] },
+  });
+
+  await prisma.adminSiteMembership.create({
+    data: { adminId: admin.id, siteId: site.id, role: SiteRole.OWNER },
+  });
+
+  if (primaryDomain) {
+    await prisma.siteDomain.create({
+      data: {
+        siteId: site.id,
+        domain: primaryDomain,
+        verificationToken: generateDomainToken(),
+        status: "PENDING",
+      },
+    });
+  }
+
+  await prisma.adminUser.update({ where: { id: admin.id }, data: { primarySiteId: site.id } });
 
   const { jwtSecret, expiresIn } = getJwtConfig();
   const token = jwt.sign({ adminId: admin.id, role: admin.role }, jwtSecret, { expiresIn });

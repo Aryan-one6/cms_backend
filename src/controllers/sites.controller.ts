@@ -100,6 +100,14 @@ export async function createSite(req: Request, res: Response) {
     data: { adminId: auth.adminId, siteId: site.id, role: SiteRole.OWNER },
   });
 
+  const adminRecord = await prisma.adminUser.findUnique({
+    where: { id: auth.adminId },
+    select: { primarySiteId: true },
+  });
+  if (!adminRecord?.primarySiteId) {
+    await prisma.adminUser.update({ where: { id: auth.adminId }, data: { primarySiteId: site.id } });
+  }
+
   // Create a domain record immediately if provided (single primary domain per site)
   if (firstDomain) {
     await prisma.siteDomain.create({
@@ -129,6 +137,7 @@ export async function listTokens(req: Request, res: Response) {
     select: {
       id: true,
       name: true,
+      plain: true,
       role: true,
       expiresAt: true,
       lastUsedAt: true,
@@ -170,6 +179,7 @@ export async function createToken(req: Request, res: Response) {
     data: {
       siteId: site.siteId,
       name: parsed.data.name,
+       plain: plain,
       role: parsed.data.role ?? ApiTokenRole.READ_ONLY,
       expiresAt,
       hashed,
@@ -177,6 +187,7 @@ export async function createToken(req: Request, res: Response) {
     select: {
       id: true,
       name: true,
+      plain: true,
       role: true,
       expiresAt: true,
       lastUsedAt: true,
@@ -447,6 +458,20 @@ export async function deleteSite(req: Request, res: Response) {
     return res.status(403).json({ message: "Only owners can delete a site" });
   }
 
+  const adminRecord = await prisma.adminUser.findUnique({
+    where: { id: auth.adminId },
+    select: { primarySiteId: true },
+  });
+  if (adminRecord?.primarySiteId === siteId) {
+    const otherSites = await prisma.adminSiteMembership.count({
+      where: { adminId: auth.adminId, siteId: { not: siteId } },
+    });
+    if (otherSites > 0) {
+      return res.status(400).json({ message: "This is your primary site. Set another site as primary before deleting." });
+    }
+    return res.status(400).json({ message: "You cannot delete your only site." });
+  }
+
   await prisma.$transaction([
     prisma.blogPostTag.deleteMany({ where: { post: { siteId } } }),
     prisma.blogPost.deleteMany({ where: { siteId } }),
@@ -458,4 +483,22 @@ export async function deleteSite(req: Request, res: Response) {
   ]);
 
   return res.json({ ok: true });
+}
+
+export async function makePrimarySite(req: Request, res: Response) {
+  const auth = (req as any).auth as JwtPayload;
+  const siteId = req.params.id;
+  if (!siteId) return res.status(400).json({ message: "Missing site id" });
+
+  const membership = await prisma.adminSiteMembership.findFirst({
+    where: { adminId: auth.adminId, siteId },
+  });
+  const isSuperAdmin = auth.role === "SUPER_ADMIN";
+  if (!membership && !isSuperAdmin) return res.status(403).json({ message: "You do not have access to this site" });
+  if (!isSuperAdmin && membership?.role !== SiteRole.OWNER) {
+    return res.status(403).json({ message: "Only owners can set a primary site" });
+  }
+
+  await prisma.adminUser.update({ where: { id: auth.adminId }, data: { primarySiteId: siteId } });
+  return res.json({ ok: true, primarySiteId: siteId });
 }

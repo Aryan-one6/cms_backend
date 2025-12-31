@@ -59,6 +59,8 @@ model AdminUser {
 
   posts        BlogPost[]
   memberships  AdminSiteMembership[]
+  primarySiteId String?
+  primarySite   Site?    @relation("PrimarySite", fields: [primarySiteId], references: [id])
 }
 
 model BlogPost {
@@ -124,6 +126,7 @@ model Site {
   memberships    AdminSiteMembership[]
   apiTokens      ApiToken[]
   siteDomains    SiteDomain[]
+  primaryFor     AdminUser[]            @relation("PrimarySite")
 }
 
 model AdminSiteMembership {
@@ -144,6 +147,7 @@ model ApiToken {
   siteId     String
   name       String
   hashed     String
+  plain      String @default("")
   role       ApiTokenRole @default(READ_ONLY)
   expiresAt  DateTime?
   lastUsedAt DateTime?

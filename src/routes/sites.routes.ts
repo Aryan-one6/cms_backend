@@ -14,6 +14,7 @@ import {
   refreshDomainToken,
   deleteDomain,
   deleteSite,
+  makePrimarySite,
 } from "../controllers/sites.controller";
 
 export const sitesRouter = Router();
@@ -28,6 +29,7 @@ sitesRouter.delete(
   requireSiteAccess,
   deleteToken
 );
+sitesRouter.post("/admin/sites/:id/make-primary", requireAuth, requireSiteAccess, makePrimarySite);
 
 sitesRouter.get("/admin/sites/:id/domains", requireAuth, requireSiteAccess, listDomains);
 sitesRouter.post("/admin/sites/:id/domains", requireAuth, requireSiteAccess, addDomain);
