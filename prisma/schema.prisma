@@ -74,6 +74,7 @@ model BlogPost {
   contentHtml   String
   status        PostStatus @default(DRAFT)
   publishedAt   DateTime?
+  imageGenCount Int        @default(0)
 
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt

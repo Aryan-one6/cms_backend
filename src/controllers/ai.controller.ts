@@ -1,13 +1,23 @@
 import { Request, Response } from "express";
 import axios from "axios";
+import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 import slugify from "slugify";
+import { uploadToS3, buildUploadKey } from "../config/storage";
+import { prisma } from "../config/prisma";
+
 
 const defaultModel = "gemini-2.5-flash";
 const defaultBase = "https://generativelanguage.googleapis.com/v1beta/models";
+const defaultImageModel = "imagen-4.0-fast-generate-001"; // Vertex image model
 
 const topicSchema = z.object({
   topic: z.string().min(3, "Topic is required"),
+});
+
+const imageSchema = z.object({
+  prompt: z.string().min(4, "Prompt is required"),
+  postId: z.string().optional(),
 });
 
 const limits = {
@@ -168,12 +178,11 @@ function fallbackContent({
   const headline = title || (topic ? `Guide to ${topic}` : "Article draft");
   const intro =
     excerpt ||
-    (topic ? `A concise outline covering ${topic}.` : "Here is a clean outline to start your article.");
+    (topic
+      ? `A concise outline covering ${topic}.`
+      : "Here is a clean outline to start your article.");
 
-  return [
-    `<h2>${headline}</h2>`,
-    `<p>${intro}</p>`,
-  ].join("");
+  return [`<h2>${headline}</h2>`, `<p>${intro}</p>`].join("");
 }
 
 function organizeContentHtml({
@@ -223,16 +232,39 @@ function generateSupplementContent({
   currentWords: number;
 }) {
   const heading = title || `Guide to ${topic}`;
-  const intro = excerpt || `A practical walkthrough of ${topic} with clear, human explanations.`;
+  const intro =
+    excerpt ||
+    `A practical walkthrough of ${topic} with clear, human explanations.`;
   const baseTopic = topic || heading;
   const themeList = [
-    { title: "What matters most", body: `Core criteria for ${baseTopic}: what to prioritize and why it affects the outcome.` },
-    { title: "How to compare options", body: "Lay out the key dimensions that separate good from bad choices. Keep it specific to this topic." },
-    { title: "Common mistakes", body: "List pitfalls and how to avoid them with concise, actionable guidance." },
-    { title: "Step-by-step approach", body: "Give a short process readers can follow. Include an example so it feels practical." },
-    { title: "Tools and resources", body: "Name helpful tools, data points, or checkpoints to validate decisions." },
-    { title: "When to get expert help", body: "Explain signals that it's worth consulting a pro or using a premium option." },
-    { title: "Wrap-up and next step", body: "A concise verdict plus the single action the reader should take now." },
+    {
+      title: "What matters most",
+      body: `Core criteria for ${baseTopic}: what to prioritize and why it affects the outcome.`,
+    },
+    {
+      title: "How to compare options",
+      body: "Lay out the key dimensions that separate good from bad choices. Keep it specific to this topic.",
+    },
+    {
+      title: "Common mistakes",
+      body: "List pitfalls and how to avoid them with concise, actionable guidance.",
+    },
+    {
+      title: "Step-by-step approach",
+      body: "Give a short process readers can follow. Include an example so it feels practical.",
+    },
+    {
+      title: "Tools and resources",
+      body: "Name helpful tools, data points, or checkpoints to validate decisions.",
+    },
+    {
+      title: "When to get expert help",
+      body: "Explain signals that it's worth consulting a pro or using a premium option.",
+    },
+    {
+      title: "Wrap-up and next step",
+      body: "A concise verdict plus the single action the reader should take now.",
+    },
   ];
 
   const sections = themeList.map((item, idx) => {
@@ -243,8 +275,6 @@ function generateSupplementContent({
       `<p>Use concrete details and an example that mentions ${baseTopic} without repeating the headline. Close with one takeaway that moves the reader toward a decision.</p>`,
     ].join("");
   });
-
- 
 
   const close = [
     "<h3>Wrap up</h3>",
@@ -284,7 +314,8 @@ function ensureMinimumContent({
 }) {
   let html = contentHtml || "";
   const words = wordCount(html);
-  if (words >= limits.contentWordsMin) return trimWords(html, limits.contentWordsMax);
+  if (words >= limits.contentWordsMin)
+    return trimWords(html, limits.contentWordsMax);
 
   const supplement = generateSupplementContent({
     title,
@@ -301,18 +332,24 @@ function ensureMinimumContent({
 }
 
 function scrubAiPhrases(html: string) {
-  return html
-    // Remove AI-sounding scaffolding headings
-    .replace(/<h3[^>]*>[^<]*finish this draft[^<]*<\/h3>/gi, "")
-    .replace(/<h3[^>]*>[^<]*quick takeaways[^<]*<\/h3>/gi, "")
-    .replace(/<p[^>]*>\s*quick takeaways\s*<\/p>/gi, "")
-    // Remove empty lists/paragraphs created after removals
-    .replace(/<ul>\s*<\/ul>/gi, "")
-    .replace(/<p>\s*<\/p>/gi, "");
+  return (
+    html
+      // Remove AI-sounding scaffolding headings
+      .replace(/<h3[^>]*>[^<]*finish this draft[^<]*<\/h3>/gi, "")
+      .replace(/<h3[^>]*>[^<]*quick takeaways[^<]*<\/h3>/gi, "")
+      .replace(/<p[^>]*>\s*quick takeaways\s*<\/p>/gi, "")
+      // Remove empty lists/paragraphs created after removals
+      .replace(/<ul>\s*<\/ul>/gi, "")
+      .replace(/<p>\s*<\/p>/gi, "")
+  );
 }
 
 function tryParseJson(text: string) {
-  const cleaned = text.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  const cleaned = text
+    .trim()
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/, "")
+    .trim();
   const match = cleaned.match(/\{[\s\S]*\}/);
   const candidate = match ? match[0] : cleaned;
   return JSON.parse(candidate);
@@ -347,16 +384,21 @@ function parseStructuredLines(text: string) {
 export async function generatePostDraft(req: Request, res: Response) {
   const parsed = topicSchema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ message: parsed.error.issues[0]?.message || "Topic is required" });
+    return res
+      .status(400)
+      .json({
+        message: parsed.error.issues[0]?.message || "Topic is required",
+      });
   }
 
   const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-  if (!apiKey) return res.status(500).json({ message: "Missing Gemini API key" });
+  if (!apiKey)
+    return res.status(500).json({ message: "Missing Gemini API key" });
 
   const model = process.env.GEMINI_MODEL?.trim() || defaultModel;
   const baseUrl = process.env.GEMINI_BASE_URL?.trim() || defaultBase;
 
-const prompt = `You are an SEO copywriter generating a full blog draft for "${parsed.data.topic}".
+  const prompt = `You are an SEO copywriter generating a full blog draft for "${parsed.data.topic}".
 Return the draft in EXACTLY this 5-line format (no extra text):
 TITLE: <title up to ${limits.titleWords} words>
 SLUG: <url-safe slug>
@@ -377,7 +419,9 @@ CONTENT_HTML_BASE64: <base64 encoded HTML between ${limits.contentWordsMin} and 
   };
 
   try {
-    const url = `${baseUrl}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const url = `${baseUrl}/${model}:generateContent?key=${encodeURIComponent(
+      apiKey
+    )}`;
     const { data } = await axios.post(url, body, {
       headers: { "Content-Type": "application/json" },
     });
@@ -392,11 +436,25 @@ CONTENT_HTML_BASE64: <base64 encoded HTML between ${limits.contentWordsMin} and 
       structured = parseStructuredLines(text);
     }
 
-    const title = trimWords(parsedJson?.title ?? structured?.title, limits.titleWords);
-    const excerpt = trimWords(parsedJson?.excerpt ?? structured?.excerpt, limits.excerptWords);
+    const title = trimWords(
+      parsedJson?.title ?? structured?.title,
+      limits.titleWords
+    );
+    const excerpt = trimWords(
+      parsedJson?.excerpt ?? structured?.excerpt,
+      limits.excerptWords
+    );
     const tags =
-      normalizeTags(parsedJson?.tags ?? structured?.tags, parsed.data.topic, title) ||
-      normalizeTags(tagsFromTopic(parsed.data.topic, title), parsed.data.topic, title) ||
+      normalizeTags(
+        parsedJson?.tags ?? structured?.tags,
+        parsed.data.topic,
+        title
+      ) ||
+      normalizeTags(
+        tagsFromTopic(parsed.data.topic, title),
+        parsed.data.topic,
+        title
+      ) ||
       tagsFromTopic(parsed.data.topic, title);
     const contentBase64 =
       parsedJson?.contentHtmlBase64 ??
@@ -415,7 +473,11 @@ CONTENT_HTML_BASE64: <base64 encoded HTML between ${limits.contentWordsMin} and 
     const slug = slugRaw ? safeSlug(slugRaw) : safeSlug("draft");
 
     if (!contentHtml && (title || excerpt || tags?.length)) {
-      contentHtml = fallbackContent({ title, excerpt,  topic: parsed.data.topic });
+      contentHtml = fallbackContent({
+        title,
+        excerpt,
+        topic: parsed.data.topic,
+      });
     }
 
     contentHtml = organizeContentHtml({
@@ -452,5 +514,117 @@ CONTENT_HTML_BASE64: <base64 encoded HTML between ${limits.contentWordsMin} and 
       err?.message ||
       "Unable to generate draft";
     return res.status(500).json({ message });
+  }
+}
+
+export async function generateCoverImage(req: Request, res: Response) {
+  const parsed = imageSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res
+      .status(400)
+      .json({
+        message: parsed.error.issues[0]?.message || "Prompt is required",
+      });
+  }
+
+  const prompt = parsed.data.prompt;
+  const postId = parsed.data.postId;
+  const vertexKey = process.env.VERTEX_AI;
+  const imageModel = process.env.GEMINI_IMAGE_MODEL?.trim() || defaultImageModel;
+  const modelCandidates = [
+    imageModel,
+    "imagen-3.0-fast-generate-001",
+    "imagen-3.0-generate-001",
+  ].filter(Boolean);
+
+  try {
+    if (!vertexKey) throw new Error("Missing image API key");
+
+    const ai = new GoogleGenAI({
+      apiKey: vertexKey,
+    });
+
+    let lastError: any = null;
+    let buffer: Buffer | null = null;
+
+    for (const model of modelCandidates) {
+      try {
+        const response = await ai.models.generateImages({
+          model,
+          prompt,
+          config: { numberOfImages: 1, aspectRatio: "16:9" },
+        });
+
+        const r: any = response as any;
+        const imgData: string | undefined =
+          r.generatedImages?.[0]?.image?.imageBytes ||
+          r.generatedImages?.[0]?.imageBytes ||
+          r.generatedImages?.[0]?.image?.data ||
+          r.generatedImages?.[0]?.bytesBase64Encoded;
+
+        if (!imgData) {
+          throw new Error(r.filteredReason || `No image returned from Vertex for model ${model}`);
+        }
+
+        buffer = Buffer.from(imgData, "base64");
+        break;
+      } catch (err: any) {
+        lastError = err;
+        continue;
+      }
+    }
+
+    if (!buffer) {
+      throw lastError || new Error("No image model succeeded");
+    }
+
+    // enforce per-post limit if postId provided
+    let remaining: number | undefined = undefined;
+    let currentCount = 0;
+    if (postId) {
+      const post = (await prisma.blogPost.findUnique({
+        where: { id: postId },
+        select: { id: true, imageGenCount: true },
+      })) as { id: string; imageGenCount: number } | null;
+      if (!post) throw new Error("Post not found");
+      currentCount = post.imageGenCount;
+      if (currentCount >= 2) {
+        return res.status(429).json({ message: "Image generation limit reached for this post" });
+      }
+      remaining = Math.max(0, 2 - (currentCount + 1));
+    }
+
+    const key = buildUploadKey(`${Date.now()}-cover.png`);
+    const upload = await uploadToS3({ fileBuffer: buffer, key, contentType: "image/png" });
+    if (postId) {
+      await prisma.blogPost.update({
+        where: { id: postId },
+        // Cast to any to satisfy type checker if generated types lag schema
+        data: { imageGenCount: { increment: 1 } } as any,
+      });
+    }
+    res.json({
+      url: upload.url,
+      absoluteUrl: upload.absoluteUrl,
+      storage: upload.storage,
+      remaining,
+    });
+  } catch (err: any) {
+    let responseDetail: any = err?.response?.data;
+    if (Buffer.isBuffer(responseDetail)) {
+      try {
+        responseDetail = responseDetail.toString("utf8");
+      } catch {
+        // leave as buffer
+      }
+    }
+    console.error("Cover image generation failed", responseDetail || err);
+    const detail =
+      responseDetail?.error ||
+      responseDetail?.message ||
+      responseDetail ||
+      err?.message ||
+      "Unable to generate image right now";
+    res.status(500).json({ message: "Image generation failed", detail });
   }
 }
