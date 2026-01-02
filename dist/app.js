@@ -11,9 +11,10 @@ const morgan_1 = __importDefault(require("morgan"));
 const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const routes_1 = require("./routes");
 const cors_2 = require("./config/cors");
+const path_1 = __importDefault(require("path"));
 const app = (0, express_1.default)();
 const defaultCorsOrigins = [
-    "http://localhost:5173",
+    "http://localhost:5174",
     "http://127.0.0.1:5173",
     "http://localhost:5050",
 ];
@@ -46,6 +47,8 @@ app.use((0, morgan_1.default)("dev"));
 app.use(express_1.default.json({ limit: "2mb" }));
 app.use((0, cookie_parser_1.default)());
 app.get("/health", (_req, res) => res.json({ ok: true }));
+// Serve locally stored uploads when S3 is not configured
+app.use("/uploads", express_1.default.static(path_1.default.resolve(__dirname, "../uploads")));
 app.use("/api", routes_1.apiRouter);
 // Basic error handler
 // eslint-disable-next-line @typescript-eslint/no-unused-vars

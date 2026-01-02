@@ -4,13 +4,22 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.generatePostDraft = generatePostDraft;
+exports.generateCoverImage = generateCoverImage;
 const axios_1 = __importDefault(require("axios"));
+const genai_1 = require("@google/genai");
 const zod_1 = require("zod");
 const slugify_1 = __importDefault(require("slugify"));
+const storage_1 = require("../config/storage");
+const prisma_1 = require("../config/prisma");
 const defaultModel = "gemini-2.5-flash";
 const defaultBase = "https://generativelanguage.googleapis.com/v1beta/models";
+const defaultImageModel = "imagen-4.0-fast-generate-001"; // Vertex image model
 const topicSchema = zod_1.z.object({
     topic: zod_1.z.string().min(3, "Topic is required"),
+});
+const imageSchema = zod_1.z.object({
+    prompt: zod_1.z.string().min(4, "Prompt is required"),
+    postId: zod_1.z.string().optional(),
 });
 const limits = {
     titleWords: 12,
@@ -152,11 +161,10 @@ function renderTagList(tags) {
 function fallbackContent({ title, excerpt, topic, }) {
     const headline = title || (topic ? `Guide to ${topic}` : "Article draft");
     const intro = excerpt ||
-        (topic ? `A concise outline covering ${topic}.` : "Here is a clean outline to start your article.");
-    return [
-        `<h2>${headline}</h2>`,
-        `<p>${intro}</p>`,
-    ].join("");
+        (topic
+            ? `A concise outline covering ${topic}.`
+            : "Here is a clean outline to start your article.");
+    return [`<h2>${headline}</h2>`, `<p>${intro}</p>`].join("");
 }
 function organizeContentHtml({ rawContent, title, excerpt, topic, }) {
     const cleaned = rawContent?.trim();
@@ -184,16 +192,38 @@ function organizeContentHtml({ rawContent, title, excerpt, topic, }) {
 }
 function generateSupplementContent({ title, topic, excerpt, currentWords, }) {
     const heading = title || `Guide to ${topic}`;
-    const intro = excerpt || `A practical walkthrough of ${topic} with clear, human explanations.`;
+    const intro = excerpt ||
+        `A practical walkthrough of ${topic} with clear, human explanations.`;
     const baseTopic = topic || heading;
     const themeList = [
-        { title: "What matters most", body: `Core criteria for ${baseTopic}: what to prioritize and why it affects the outcome.` },
-        { title: "How to compare options", body: "Lay out the key dimensions that separate good from bad choices. Keep it specific to this topic." },
-        { title: "Common mistakes", body: "List pitfalls and how to avoid them with concise, actionable guidance." },
-        { title: "Step-by-step approach", body: "Give a short process readers can follow. Include an example so it feels practical." },
-        { title: "Tools and resources", body: "Name helpful tools, data points, or checkpoints to validate decisions." },
-        { title: "When to get expert help", body: "Explain signals that it's worth consulting a pro or using a premium option." },
-        { title: "Wrap-up and next step", body: "A concise verdict plus the single action the reader should take now." },
+        {
+            title: "What matters most",
+            body: `Core criteria for ${baseTopic}: what to prioritize and why it affects the outcome.`,
+        },
+        {
+            title: "How to compare options",
+            body: "Lay out the key dimensions that separate good from bad choices. Keep it specific to this topic.",
+        },
+        {
+            title: "Common mistakes",
+            body: "List pitfalls and how to avoid them with concise, actionable guidance.",
+        },
+        {
+            title: "Step-by-step approach",
+            body: "Give a short process readers can follow. Include an example so it feels practical.",
+        },
+        {
+            title: "Tools and resources",
+            body: "Name helpful tools, data points, or checkpoints to validate decisions.",
+        },
+        {
+            title: "When to get expert help",
+            body: "Explain signals that it's worth consulting a pro or using a premium option.",
+        },
+        {
+            title: "Wrap-up and next step",
+            body: "A concise verdict plus the single action the reader should take now.",
+        },
     ];
     const sections = themeList.map((item, idx) => {
         const anchor = idx + 1;
@@ -241,17 +271,21 @@ function ensureMinimumContent({ contentHtml, title, excerpt, topic, }) {
     return trimWords(combined, limits.contentWordsMax);
 }
 function scrubAiPhrases(html) {
-    return html
+    return (html
         // Remove AI-sounding scaffolding headings
         .replace(/<h3[^>]*>[^<]*finish this draft[^<]*<\/h3>/gi, "")
         .replace(/<h3[^>]*>[^<]*quick takeaways[^<]*<\/h3>/gi, "")
         .replace(/<p[^>]*>\s*quick takeaways\s*<\/p>/gi, "")
         // Remove empty lists/paragraphs created after removals
         .replace(/<ul>\s*<\/ul>/gi, "")
-        .replace(/<p>\s*<\/p>/gi, "");
+        .replace(/<p>\s*<\/p>/gi, ""));
 }
 function tryParseJson(text) {
-    const cleaned = text.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+    const cleaned = text
+        .trim()
+        .replace(/^```(?:json)?/i, "")
+        .replace(/```$/, "")
+        .trim();
     const match = cleaned.match(/\{[\s\S]*\}/);
     const candidate = match ? match[0] : cleaned;
     return JSON.parse(candidate);
@@ -281,7 +315,11 @@ function parseStructuredLines(text) {
 async function generatePostDraft(req, res) {
     const parsed = topicSchema.safeParse(req.body);
     if (!parsed.success) {
-        return res.status(400).json({ message: parsed.error.issues[0]?.message || "Topic is required" });
+        return res
+            .status(400)
+            .json({
+            message: parsed.error.issues[0]?.message || "Topic is required",
+        });
     }
     const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
     if (!apiKey)
@@ -341,7 +379,11 @@ CONTENT_HTML_BASE64: <base64 encoded HTML between ${limits.contentWordsMin} and 
         const slugRaw = parsedJson?.slug ?? structured?.slug ?? title;
         const slug = slugRaw ? safeSlug(slugRaw) : safeSlug("draft");
         if (!contentHtml && (title || excerpt || tags?.length)) {
-            contentHtml = fallbackContent({ title, excerpt, topic: parsed.data.topic });
+            contentHtml = fallbackContent({
+                title,
+                excerpt,
+                topic: parsed.data.topic,
+            });
         }
         contentHtml = organizeContentHtml({
             rawContent: contentHtml,
@@ -375,5 +417,108 @@ CONTENT_HTML_BASE64: <base64 encoded HTML between ${limits.contentWordsMin} and 
             err?.message ||
             "Unable to generate draft";
         return res.status(500).json({ message });
+    }
+}
+async function generateCoverImage(req, res) {
+    const parsed = imageSchema.safeParse(req.body);
+    if (!parsed.success) {
+        return res
+            .status(400)
+            .json({
+            message: parsed.error.issues[0]?.message || "Prompt is required",
+        });
+    }
+    const prompt = parsed.data.prompt;
+    const postId = parsed.data.postId;
+    const vertexKey = process.env.VERTEX_AI;
+    const imageModel = process.env.GEMINI_IMAGE_MODEL?.trim() || defaultImageModel;
+    const modelCandidates = [
+        imageModel,
+        "imagen-3.0-fast-generate-001",
+        "imagen-3.0-generate-001",
+    ].filter(Boolean);
+    try {
+        if (!vertexKey)
+            throw new Error("Missing image API key");
+        const ai = new genai_1.GoogleGenAI({
+            apiKey: vertexKey,
+        });
+        let lastError = null;
+        let buffer = null;
+        for (const model of modelCandidates) {
+            try {
+                const response = await ai.models.generateImages({
+                    model,
+                    prompt,
+                    config: { numberOfImages: 1, aspectRatio: "16:9" },
+                });
+                const r = response;
+                const imgData = r.generatedImages?.[0]?.image?.imageBytes ||
+                    r.generatedImages?.[0]?.imageBytes ||
+                    r.generatedImages?.[0]?.image?.data ||
+                    r.generatedImages?.[0]?.bytesBase64Encoded;
+                if (!imgData) {
+                    throw new Error(r.filteredReason || `No image returned from Vertex for model ${model}`);
+                }
+                buffer = Buffer.from(imgData, "base64");
+                break;
+            }
+            catch (err) {
+                lastError = err;
+                continue;
+            }
+        }
+        if (!buffer) {
+            throw lastError || new Error("No image model succeeded");
+        }
+        // enforce per-post limit if postId provided
+        let remaining = undefined;
+        let currentCount = 0;
+        if (postId) {
+            const post = (await prisma_1.prisma.blogPost.findUnique({
+                where: { id: postId },
+                select: { id: true, imageGenCount: true },
+            }));
+            if (!post)
+                throw new Error("Post not found");
+            currentCount = post.imageGenCount;
+            if (currentCount >= 2) {
+                return res.status(429).json({ message: "Image generation limit reached for this post" });
+            }
+            remaining = Math.max(0, 2 - (currentCount + 1));
+        }
+        const key = (0, storage_1.buildUploadKey)(`${Date.now()}-cover.png`);
+        const upload = await (0, storage_1.uploadToS3)({ fileBuffer: buffer, key, contentType: "image/png" });
+        if (postId) {
+            await prisma_1.prisma.blogPost.update({
+                where: { id: postId },
+                // Cast to any to satisfy type checker if generated types lag schema
+                data: { imageGenCount: { increment: 1 } },
+            });
+        }
+        res.json({
+            url: upload.url,
+            absoluteUrl: upload.absoluteUrl,
+            storage: upload.storage,
+            remaining,
+        });
+    }
+    catch (err) {
+        let responseDetail = err?.response?.data;
+        if (Buffer.isBuffer(responseDetail)) {
+            try {
+                responseDetail = responseDetail.toString("utf8");
+            }
+            catch {
+                // leave as buffer
+            }
+        }
+        console.error("Cover image generation failed", responseDetail || err);
+        const detail = responseDetail?.error ||
+            responseDetail?.message ||
+            responseDetail ||
+            err?.message ||
+            "Unable to generate image right now";
+        res.status(500).json({ message: "Image generation failed", detail });
     }
 }

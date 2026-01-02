@@ -18,10 +18,10 @@ async function uploadImage(req, res) {
             key,
             contentType: file.mimetype,
         });
-        return res.json({ url: s3Result.url, absoluteUrl: s3Result.url, storage: "s3" });
+        return res.json({ url: s3Result.url, absoluteUrl: s3Result.absoluteUrl, storage: s3Result.storage });
     }
     catch (err) {
         console.error("Upload failed", err);
-        res.status(500).json({ message: "Upload failed (S3 required in serverless)", detail: err?.message });
+        res.status(500).json({ message: "Upload failed", detail: err?.message });
     }
 }

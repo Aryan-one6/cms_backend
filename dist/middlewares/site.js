@@ -10,6 +10,7 @@ const prisma_1 = require("../config/prisma");
 function getSiteId(req) {
     return (req.header("x-site-id") ||
         req.query.siteId ||
+        req.body?.siteId ||
         req.params?.siteId ||
         req.params?.id ||
         "")

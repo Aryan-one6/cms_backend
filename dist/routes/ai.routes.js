@@ -7,3 +7,4 @@ const site_1 = require("../middlewares/site");
 const ai_controller_1 = require("../controllers/ai.controller");
 exports.aiRouter = (0, express_1.Router)();
 exports.aiRouter.post("/admin/ai/post-draft", auth_1.requireAuth, site_1.requireSiteAccess, ai_controller_1.generatePostDraft);
+exports.aiRouter.post("/admin/ai/cover-image", auth_1.requireAuth, site_1.requireSiteAccess, ai_controller_1.generateCoverImage);

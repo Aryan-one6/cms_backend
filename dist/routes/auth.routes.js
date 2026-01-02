@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.authRouter = void 0;
 const express_1 = require("express");
 const auth_controller_1 = require("../controllers/auth.controller");
+const oauth_controller_1 = require("../controllers/oauth.controller");
 const auth_1 = require("../middlewares/auth");
 exports.authRouter = (0, express_1.Router)();
 exports.authRouter.post("/login", auth_controller_1.login);
@@ -11,3 +12,7 @@ exports.authRouter.post("/password-reset/request", auth_controller_1.requestPass
 exports.authRouter.post("/password-reset/confirm", auth_controller_1.confirmPasswordReset);
 exports.authRouter.get("/me", auth_1.requireAuth, auth_controller_1.me);
 exports.authRouter.post("/logout", auth_controller_1.logout);
+exports.authRouter.get("/oauth/google", oauth_controller_1.startGoogleOAuth);
+exports.authRouter.get("/oauth/google/callback", oauth_controller_1.googleOAuthCallback);
+exports.authRouter.get("/oauth/github", oauth_controller_1.startGithubOAuth);
+exports.authRouter.get("/oauth/github/callback", oauth_controller_1.githubOAuthCallback);

@@ -11,6 +11,7 @@ exports.sitesRouter.post("/admin/sites", auth_1.requireAuth, sites_controller_1.
 exports.sitesRouter.get("/admin/sites/:id/tokens", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.listTokens);
 exports.sitesRouter.post("/admin/sites/:id/tokens", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.createToken);
 exports.sitesRouter.delete("/admin/sites/:siteId/tokens/:tokenId", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.deleteToken);
+exports.sitesRouter.post("/admin/sites/:id/make-primary", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.makePrimarySite);
 exports.sitesRouter.get("/admin/sites/:id/domains", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.listDomains);
 exports.sitesRouter.post("/admin/sites/:id/domains", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.addDomain);
 exports.sitesRouter.post("/admin/sites/:id/domains/:domainId/verify", auth_1.requireAuth, site_1.requireSiteAccess, sites_controller_1.verifyDomain);

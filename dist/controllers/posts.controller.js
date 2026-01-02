@@ -19,6 +19,8 @@ const zod_1 = require("zod");
 const slugify_1 = __importDefault(require("slugify"));
 const prisma_1 = require("../config/prisma");
 const client_1 = require("@prisma/client");
+const plans_1 = require("../config/plans");
+const accountSubscription_1 = require("../utils/accountSubscription");
 const createSchema = zod_1.z.object({
     title: zod_1.z.string().min(3),
     slug: zod_1.z.string().optional(),
@@ -227,6 +229,19 @@ async function adminCreatePost(req, res) {
     }
     const slugInput = parsed.data.slug?.trim();
     const slug = await ensureUniqueSlug(slugInput && slugInput.length ? slugInput : parsed.data.title, site.siteId);
+    // Plan enforcement: free plan allows limited posts
+    if (auth.role !== "SUPER_ADMIN") {
+        const plan = await (0, accountSubscription_1.getAccountPlan)(auth.adminId);
+        if (plan === client_1.Plan.FREE) {
+            const postCount = await prisma_1.prisma.blogPost.count({ where: { siteId: site.siteId } });
+            if (postCount >= plans_1.FREE_POST_LIMIT) {
+                return res.status(402).json({
+                    message: "Free plan limit reached. Upgrade to create more posts.",
+                    plans: plans_1.PLANS.filter((p) => p.id !== "FREE"),
+                });
+            }
+        }
+    }
     const post = await prisma_1.prisma.blogPost.create({
         data: {
             siteId: site.siteId,
@@ -321,7 +336,10 @@ async function adminExportPosts(req, res) {
     const site = req.site;
     if (!site)
         return res.status(400).json({ message: "Site context missing" });
-    const origin = process.env.APP_ORIGIN || `${req.protocol}://${req.get("host") || "localhost"}`;
+    const origin = (process.env.APP_ORIGIN || "")
+        .split(",")[0]
+        .trim()
+        .replace(/\/+$/, "") || `${req.protocol}://${req.get("host") || "localhost"}`;
     const posts = await prisma_1.prisma.blogPost.findMany({
         where: { siteId: site.siteId },
         orderBy: { updatedAt: "desc" },

@@ -30,6 +30,9 @@ function isOriginAllowed(origin, staticOrigins) {
     try {
         const url = new URL(origin);
         const host = url.hostname.toLowerCase();
+        // Always allow localhost / 127.0.0.1 on any port for dev/testing
+        if (host === "localhost" || host === "127.0.0.1")
+            return true;
         // direct match against static origins (origin string or hostname)
         if (staticOrigins.some((o) => o === origin || o === url.origin))
             return true;

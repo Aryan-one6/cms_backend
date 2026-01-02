@@ -8,6 +8,7 @@ exports.uploadToS3 = uploadToS3;
 exports.buildLocalUrl = buildLocalUrl;
 exports.buildUploadKey = buildUploadKey;
 const client_s3_1 = require("@aws-sdk/client-s3");
+const path_1 = __importDefault(require("path"));
 const promises_1 = __importDefault(require("fs/promises"));
 function hasS3Env() {
     return Boolean(process.env.S3_BUCKET &&
@@ -28,8 +29,14 @@ function getS3Client() {
 }
 async function uploadToS3(opts) {
     const client = getS3Client();
-    if (!client)
-        throw new Error("S3 not configured");
+    if (!client) {
+        const filename = path_1.default.basename(opts.key);
+        const relative = `/uploads/${filename}`;
+        const baseOrigin = process.env.APP_ORIGIN?.split(",")[0]?.trim().replace(/\/+$/, "") ||
+            `http://localhost:${process.env.PORT || 5050}`;
+        const absolute = `${baseOrigin}${relative}`;
+        return { url: relative, absoluteUrl: absolute, storage: "local" };
+    }
     let body;
     if (opts.fileBuffer) {
         body = opts.fileBuffer;
@@ -41,18 +48,19 @@ async function uploadToS3(opts) {
         throw new Error("Upload failed: provide either localPath or fileBuffer");
     }
     const bucket = process.env.S3_BUCKET;
-    const acl = process.env.S3_ACL ?? "public-read";
+    const aclEnv = (process.env.S3_ACL || "").trim().toLowerCase();
+    const acl = !aclEnv || aclEnv === "none" || aclEnv === "skip" ? undefined : aclEnv;
     const command = new client_s3_1.PutObjectCommand({
         Bucket: bucket,
         Key: opts.key,
         Body: body,
         ContentType: opts.contentType,
-        ACL: acl,
+        ...(acl ? { ACL: acl } : {}), // Skip ACL if bucket blocks public ACLs
     });
     await client.send(command);
     const base = process.env.S3_CDN_BASE || `https://${bucket}.s3.${process.env.S3_REGION}.amazonaws.com`;
     const url = `${base.replace(/\/$/, "")}/${opts.key}`;
-    return { url };
+    return { url, absoluteUrl: url, storage: "s3" };
 }
 function buildLocalUrl(filename, reqOrigin) {
     const relative = `/uploads/${filename}`;

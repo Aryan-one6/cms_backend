@@ -48,6 +48,7 @@ exports.verifyDomain = verifyDomain;
 exports.verifyDomainHtml = verifyDomainHtml;
 exports.deleteDomain = deleteDomain;
 exports.deleteSite = deleteSite;
+exports.makePrimarySite = makePrimarySite;
 const zod_1 = require("zod");
 const slugify_1 = __importDefault(require("slugify"));
 const crypto_1 = __importDefault(require("crypto"));
@@ -55,6 +56,8 @@ const prisma_1 = require("../config/prisma");
 const client_1 = require("@prisma/client");
 const promises_1 = __importDefault(require("dns/promises"));
 const axios_1 = __importDefault(require("axios"));
+const accountSubscription_1 = require("../utils/accountSubscription");
+const plans_1 = require("../config/plans");
 const createSiteSchema = zod_1.z.object({
     name: zod_1.z.string().min(2),
     domains: zod_1.z.array(zod_1.z.string()).optional(),
@@ -91,9 +94,23 @@ async function listSites(req, res) {
         where: { adminId: auth.adminId },
         include: { site: { include: { siteDomains: true } } },
     });
+    const accountSub = await (0, accountSubscription_1.getAccountSubscription)(auth.adminId);
     const memberSites = memberships.map((m) => ({
         ...m.site,
         siteDomains: m.site.siteDomains,
+        subscription: accountSub
+            ? {
+                plan: accountSub.plan,
+                status: accountSub.status,
+                expiresAt: accountSub.expiresAt,
+                startedAt: accountSub.startedAt,
+            }
+            : {
+                plan: "FREE",
+                status: "active",
+                expiresAt: null,
+                startedAt: null,
+            },
         membershipRole: m.role,
     }));
     if (auth.role === "SUPER_ADMIN") {
@@ -101,7 +118,23 @@ async function listSites(req, res) {
         const merged = new Map();
         for (const site of [
             ...memberSites,
-            ...allSites.map((s) => ({ ...s, membershipRole: client_1.SiteRole.OWNER })),
+            ...allSites.map((s) => ({
+                ...s,
+                subscription: accountSub
+                    ? {
+                        plan: accountSub.plan,
+                        status: accountSub.status,
+                        expiresAt: accountSub.expiresAt,
+                        startedAt: accountSub.startedAt,
+                    }
+                    : {
+                        plan: "FREE",
+                        status: "active",
+                        expiresAt: null,
+                        startedAt: null,
+                    },
+                membershipRole: client_1.SiteRole.OWNER,
+            })),
         ]) {
             merged.set(site.id, site);
         }
@@ -114,6 +147,21 @@ async function createSite(req, res) {
     const parsed = createSiteSchema.safeParse(req.body);
     if (!parsed.success)
         return res.status(400).json(parsed.error.flatten());
+    if (auth.role !== "SUPER_ADMIN") {
+        const plan = await (0, accountSubscription_1.getAccountPlan)(auth.adminId);
+        const siteLimit = (0, plans_1.getSiteLimit)(plan);
+        if (siteLimit !== null) {
+            const siteCount = await prisma_1.prisma.adminSiteMembership.count({
+                where: { adminId: auth.adminId },
+            });
+            if (siteCount >= siteLimit) {
+                return res.status(402).json({
+                    message: "Site limit reached. Upgrade to add more sites.",
+                    plans: plans_1.PLANS.filter((p) => p.id !== "FREE"),
+                });
+            }
+        }
+    }
     const firstDomain = parsed.data.domains && parsed.data.domains.length > 0
         ? normalizeDomain(parsed.data.domains[0])
         : undefined;
@@ -130,6 +178,13 @@ async function createSite(req, res) {
     await prisma_1.prisma.adminSiteMembership.create({
         data: { adminId: auth.adminId, siteId: site.id, role: client_1.SiteRole.OWNER },
     });
+    const adminRecord = await prisma_1.prisma.adminUser.findUnique({
+        where: { id: auth.adminId },
+        select: { primarySiteId: true },
+    });
+    if (!adminRecord?.primarySiteId) {
+        await prisma_1.prisma.adminUser.update({ where: { id: auth.adminId }, data: { primarySiteId: site.id } });
+    }
     // Create a domain record immediately if provided (single primary domain per site)
     if (firstDomain) {
         await prisma_1.prisma.siteDomain.create({
@@ -156,6 +211,7 @@ async function listTokens(req, res) {
         select: {
             id: true,
             name: true,
+            plain: true,
             role: true,
             expiresAt: true,
             lastUsedAt: true,
@@ -191,6 +247,7 @@ async function createToken(req, res) {
         data: {
             siteId: site.siteId,
             name: parsed.data.name,
+            plain: plain,
             role: parsed.data.role ?? client_1.ApiTokenRole.READ_ONLY,
             expiresAt,
             hashed,
@@ -198,6 +255,7 @@ async function createToken(req, res) {
         select: {
             id: true,
             name: true,
+            plain: true,
             role: true,
             expiresAt: true,
             lastUsedAt: true,
@@ -442,6 +500,19 @@ async function deleteSite(req, res) {
     if (!isSuperAdmin && membership?.role !== client_1.SiteRole.OWNER) {
         return res.status(403).json({ message: "Only owners can delete a site" });
     }
+    const adminRecord = await prisma_1.prisma.adminUser.findUnique({
+        where: { id: auth.adminId },
+        select: { primarySiteId: true },
+    });
+    if (adminRecord?.primarySiteId === siteId) {
+        const otherSites = await prisma_1.prisma.adminSiteMembership.count({
+            where: { adminId: auth.adminId, siteId: { not: siteId } },
+        });
+        if (otherSites > 0) {
+            return res.status(400).json({ message: "This is your primary site. Set another site as primary before deleting." });
+        }
+        return res.status(400).json({ message: "You cannot delete your only site." });
+    }
     await prisma_1.prisma.$transaction([
         prisma_1.prisma.blogPostTag.deleteMany({ where: { post: { siteId } } }),
         prisma_1.prisma.blogPost.deleteMany({ where: { siteId } }),
@@ -452,4 +523,21 @@ async function deleteSite(req, res) {
         prisma_1.prisma.site.delete({ where: { id: siteId } }),
     ]);
     return res.json({ ok: true });
+}
+async function makePrimarySite(req, res) {
+    const auth = req.auth;
+    const siteId = req.params.id;
+    if (!siteId)
+        return res.status(400).json({ message: "Missing site id" });
+    const membership = await prisma_1.prisma.adminSiteMembership.findFirst({
+        where: { adminId: auth.adminId, siteId },
+    });
+    const isSuperAdmin = auth.role === "SUPER_ADMIN";
+    if (!membership && !isSuperAdmin)
+        return res.status(403).json({ message: "You do not have access to this site" });
+    if (!isSuperAdmin && membership?.role !== client_1.SiteRole.OWNER) {
+        return res.status(403).json({ message: "Only owners can set a primary site" });
+    }
+    await prisma_1.prisma.adminUser.update({ where: { id: auth.adminId }, data: { primarySiteId: siteId } });
+    return res.json({ ok: true, primarySiteId: siteId });
 }

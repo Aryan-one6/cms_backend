@@ -10,13 +10,16 @@ exports.logout = logout;
 exports.requestPasswordReset = requestPasswordReset;
 exports.confirmPasswordReset = confirmPasswordReset;
 const bcrypt_1 = __importDefault(require("bcrypt"));
-const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+const authTokens_1 = require("../utils/authTokens");
 const zod_1 = require("zod");
 const prisma_1 = require("../config/prisma");
 const mailer_1 = require("../utils/mailer");
 const crypto_1 = __importDefault(require("crypto"));
-const slugify_1 = __importDefault(require("slugify"));
 const client_1 = require("@prisma/client");
+const crypto_2 = require("crypto");
+const accountSubscription_1 = require("../utils/accountSubscription");
+const ensureDefaultSite_1 = require("../utils/ensureDefaultSite");
+const slugify_1 = __importDefault(require("slugify"));
 const loginSchema = zod_1.z.object({
     email: zod_1.z.string().email(),
     password: zod_1.z.string().min(6),
@@ -25,6 +28,8 @@ const signupSchema = zod_1.z.object({
     name: zod_1.z.string().min(2),
     email: zod_1.z.string().email(),
     password: zod_1.z.string().min(6),
+    siteName: zod_1.z.string().min(2),
+    domain: zod_1.z.string().min(3),
 });
 const resetRequestSchema = zod_1.z.object({
     email: zod_1.z.string().email(),
@@ -33,57 +38,31 @@ const resetConfirmSchema = zod_1.z.object({
     token: zod_1.z.string().min(10),
     password: zod_1.z.string().min(6),
 });
-async function ensureDefaultSite(adminId, adminName) {
-    const existingSite = await prisma_1.prisma.adminSiteMembership.findFirst({ where: { adminId } });
-    if (existingSite)
-        return;
-    let base = adminName || "Main Site";
-    if (base.length < 3)
-        base = "site";
-    let slug = (0, slugify_1.default)(base, { lower: true, strict: true });
-    let i = 1;
-    while (true) {
-        const exists = await prisma_1.prisma.site.findUnique({ where: { slug } });
-        if (!exists)
-            break;
-        slug = `${(0, slugify_1.default)(base, { lower: true, strict: true })}-${i++}`;
-    }
-    const site = await prisma_1.prisma.site.create({
-        data: { name: `${adminName || "My"} Site`, slug, domains: [] },
-    });
-    await prisma_1.prisma.adminSiteMembership.create({
-        data: { adminId, siteId: site.id, role: client_1.SiteRole.OWNER },
-    });
+function normalizeDomain(domain) {
+    return domain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
 }
-function getJwtConfig() {
-    const jwtSecret = process.env.JWT_SECRET;
-    if (!jwtSecret) {
-        throw new Error("JWT secret is not configured");
-    }
-    const expiresIn = process.env.JWT_EXPIRES_IN ?? "7d";
-    return { jwtSecret, expiresIn };
+function generateDomainToken() {
+    return (0, crypto_2.randomBytes)(16).toString("hex");
 }
 async function login(req, res) {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success)
         return res.status(400).json(parsed.error.flatten());
     const { email, password } = parsed.data;
-    const { jwtSecret, expiresIn } = getJwtConfig();
     const admin = await prisma_1.prisma.adminUser.findUnique({ where: { email } });
     if (!admin)
         return res.status(401).json({ message: "Invalid credentials" });
+    if (!admin.passwordHash) {
+        return res.status(401).json({ message: "This account uses Google/GitHub login." });
+    }
     const ok = await bcrypt_1.default.compare(password, admin.passwordHash);
     if (!ok)
         return res.status(401).json({ message: "Invalid credentials" });
-    await ensureDefaultSite(admin.id, admin.name);
-    const token = jsonwebtoken_1.default.sign({ adminId: admin.id, role: admin.role }, jwtSecret, { expiresIn });
+    await (0, ensureDefaultSite_1.ensureDefaultSite)(admin.id, admin.name);
+    await (0, accountSubscription_1.ensureAccountSubscription)(admin.id);
+    const token = (0, authTokens_1.signAdminToken)({ adminId: admin.id, role: admin.role });
     // cookie-based auth (best for admin panel)
-    res.cookie("accessToken", token, {
-        httpOnly: true,
-        sameSite: "lax",
-        secure: process.env.NODE_ENV === "production",
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    res.cookie("accessToken", token, (0, authTokens_1.getCookieOptions)());
     return res.json({
         admin: { id: admin.id, name: admin.name, email: admin.email, role: admin.role },
     });
@@ -92,7 +71,7 @@ async function signup(req, res) {
     const parsed = signupSchema.safeParse(req.body);
     if (!parsed.success)
         return res.status(400).json(parsed.error.flatten());
-    const { name, email, password } = parsed.data;
+    const { name, email, password, siteName, domain } = parsed.data;
     const existing = await prisma_1.prisma.adminUser.findUnique({ where: { email } });
     if (existing)
         return res.status(400).json({ message: "Email already in use" });
@@ -100,15 +79,36 @@ async function signup(req, res) {
     const admin = await prisma_1.prisma.adminUser.create({
         data: { name, email, passwordHash, role: "EDITOR" },
     });
-    await ensureDefaultSite(admin.id, admin.name);
-    const { jwtSecret, expiresIn } = getJwtConfig();
-    const token = jsonwebtoken_1.default.sign({ adminId: admin.id, role: admin.role }, jwtSecret, { expiresIn });
-    res.cookie("accessToken", token, {
-        httpOnly: true,
-        sameSite: "lax",
-        secure: process.env.NODE_ENV === "production",
-        maxAge: 7 * 24 * 60 * 60 * 1000,
+    // Create primary site using provided info
+    let slug = (0, slugify_1.default)(siteName, { lower: true, strict: true });
+    let i = 1;
+    while (true) {
+        const exists = await prisma_1.prisma.site.findUnique({ where: { slug } });
+        if (!exists)
+            break;
+        slug = `${(0, slugify_1.default)(siteName, { lower: true, strict: true })}-${i++}`;
+    }
+    const primaryDomain = normalizeDomain(domain);
+    const site = await prisma_1.prisma.site.create({
+        data: { name: siteName, slug, domains: primaryDomain ? [primaryDomain] : [] },
     });
+    await prisma_1.prisma.adminSiteMembership.create({
+        data: { adminId: admin.id, siteId: site.id, role: client_1.SiteRole.OWNER },
+    });
+    if (primaryDomain) {
+        await prisma_1.prisma.siteDomain.create({
+            data: {
+                siteId: site.id,
+                domain: primaryDomain,
+                verificationToken: generateDomainToken(),
+                status: "PENDING",
+            },
+        });
+    }
+    await prisma_1.prisma.adminUser.update({ where: { id: admin.id }, data: { primarySiteId: site.id } });
+    await (0, accountSubscription_1.ensureAccountSubscription)(admin.id);
+    const token = (0, authTokens_1.signAdminToken)({ adminId: admin.id, role: admin.role });
+    res.cookie("accessToken", token, (0, authTokens_1.getCookieOptions)());
     return res.status(201).json({
         admin: { id: admin.id, name: admin.name, email: admin.email, role: admin.role },
     });
@@ -117,12 +117,41 @@ async function me(req, res) {
     const auth = req.auth;
     const admin = await prisma_1.prisma.adminUser.findUnique({
         where: { id: auth.adminId },
-        select: { id: true, name: true, email: true, role: true, createdAt: true },
+        select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            createdAt: true,
+            avatarUrl: true,
+            accountSubscription: {
+                select: { plan: true, status: true, expiresAt: true, startedAt: true },
+            },
+        },
     });
+    if (admin && !admin.accountSubscription) {
+        await (0, accountSubscription_1.ensureAccountSubscription)(admin.id);
+        const refreshed = await prisma_1.prisma.adminUser.findUnique({
+            where: { id: auth.adminId },
+            select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+                createdAt: true,
+                avatarUrl: true,
+                accountSubscription: {
+                    select: { plan: true, status: true, expiresAt: true, startedAt: true },
+                },
+            },
+        });
+        return res.json({ admin: refreshed });
+    }
     return res.json({ admin });
 }
 async function logout(_req, res) {
-    res.clearCookie("accessToken");
+    const opts = (0, authTokens_1.getCookieOptions)();
+    res.clearCookie("accessToken", opts);
     return res.json({ ok: true });
 }
 async function requestPasswordReset(req, res) {
@@ -138,7 +167,10 @@ async function requestPasswordReset(req, res) {
         where: { id: admin.id },
         data: { resetToken: token, resetExpires: expires },
     });
-    const baseUrl = process.env.APP_ORIGIN || "http://localhost:5173";
+    const baseUrl = (process.env.APP_ORIGIN || "http://localhost:5173")
+        .split(",")[0]
+        .trim()
+        .replace(/\/+$/, "") || "http://localhost:5173";
     const resetLink = `${baseUrl}/reset-password?token=${token}`;
     const hasSmtp = Boolean(process.env.SMTP_HOST && process.env.SMTP_PORT);
     if (hasSmtp) {

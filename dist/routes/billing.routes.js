@@ -1,0 +1,10 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.billingRouter = void 0;
+const express_1 = require("express");
+const auth_1 = require("../middlewares/auth");
+const billing_controller_1 = require("../controllers/billing.controller");
+exports.billingRouter = (0, express_1.Router)();
+exports.billingRouter.get("/admin/billing/plans", auth_1.requireAuth, billing_controller_1.listPlans);
+exports.billingRouter.post("/admin/billing/order", auth_1.requireAuth, billing_controller_1.createOrder);
+exports.billingRouter.post("/admin/billing/verify", auth_1.requireAuth, billing_controller_1.verifyPayment);

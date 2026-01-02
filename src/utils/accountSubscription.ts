@@ -7,7 +7,7 @@ const PLAN_RANK: Record<Plan, number> = {
   [Plan.ENTERPRISE]: 2,
 };
 
-function pickBestPlan(plans: Plan[]) {
+function pickBestPlan(plans: Plan[]): Plan {
   if (!plans.length) return Plan.FREE;
   return plans.reduce((best, next) => (PLAN_RANK[next] > PLAN_RANK[best] ? next : best), plans[0]);
 }
