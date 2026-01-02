@@ -7,6 +7,12 @@ import {
   requestPasswordReset,
   confirmPasswordReset,
 } from "../controllers/auth.controller";
+import {
+  startGoogleOAuth,
+  googleOAuthCallback,
+  startGithubOAuth,
+  githubOAuthCallback,
+} from "../controllers/oauth.controller";
 import { requireAuth } from "../middlewares/auth";
 
 export const authRouter = Router();
@@ -17,3 +23,7 @@ authRouter.post("/password-reset/request", requestPasswordReset);
 authRouter.post("/password-reset/confirm", confirmPasswordReset);
 authRouter.get("/me", requireAuth, me);
 authRouter.post("/logout", logout);
+authRouter.get("/oauth/google", startGoogleOAuth);
+authRouter.get("/oauth/google/callback", googleOAuthCallback);
+authRouter.get("/oauth/github", startGithubOAuth);
+authRouter.get("/oauth/github/callback", githubOAuthCallback);

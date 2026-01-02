@@ -17,6 +17,11 @@ enum AdminStatus {
   SUSPENDED
 }
 
+enum OAuthProvider {
+  GOOGLE
+  GITHUB
+}
+
 enum SiteRole {
   OWNER
   EDITOR
@@ -44,13 +49,22 @@ enum PostStatus {
   PUBLISHED
 }
 
+enum Plan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
 model AdminUser {
   id           String   @id @default(cuid())
   name         String
   email        String   @unique
-  passwordHash String
+  passwordHash String?
   role         AdminRole @default(EDITOR)
   status       AdminStatus @default(ACTIVE)
+  avatarUrl    String?
+  oauthProvider OAuthProvider?
+  oauthSubject  String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -61,6 +75,9 @@ model AdminUser {
   memberships  AdminSiteMembership[]
   primarySiteId String?
   primarySite   Site?    @relation("PrimarySite", fields: [primarySiteId], references: [id])
+  accountSubscription AccountSubscription?
+
+  @@unique([oauthProvider, oauthSubject])
 }
 
 model BlogPost {
@@ -128,6 +145,29 @@ model Site {
   apiTokens      ApiToken[]
   siteDomains    SiteDomain[]
   primaryFor     AdminUser[]            @relation("PrimarySite")
+}
+
+model AccountSubscription {
+  id          String   @id @default(cuid())
+  adminId     String   @unique
+  admin       AdminUser @relation(fields: [adminId], references: [id])
+  plan        Plan     @default(FREE)
+  status      String   @default("active")
+  startedAt   DateTime @default(now())
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Subscription {
+  id          String   @id @default(cuid())
+  siteId      String   @unique
+  plan        Plan     @default(FREE)
+  status      String   @default("active")
+  startedAt   DateTime @default(now())
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model AdminSiteMembership {

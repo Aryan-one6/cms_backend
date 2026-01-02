@@ -4,7 +4,9 @@ import slugify from "slugify";
 import { prisma } from "../config/prisma";
 import { JwtPayload } from "../middlewares/auth";
 import { SiteContext, SiteTokenContext } from "../middlewares/site";
-import { SiteRole } from "@prisma/client";
+import { SiteRole, Plan } from "@prisma/client";
+import { FREE_POST_LIMIT, PLANS } from "../config/plans";
+import { getAccountPlan } from "../utils/accountSubscription";
 
 const createSchema = z.object({
   title: z.string().min(3),
@@ -32,6 +34,7 @@ const importPostSchema = z.object({
 const importSchema = z.object({
   posts: z.array(importPostSchema).min(1, "No posts provided"),
 });
+
 
 function stringifyCsvField(value: any) {
   const str = value == null ? "" : String(value);
@@ -180,6 +183,7 @@ function ensureCanMutateSite(auth: JwtPayload, membershipRole: SiteRole | null) 
   return false;
 }
 
+
 export async function adminListPosts(req: Request, res: Response) {
   const auth = (req as any).auth as JwtPayload;
   const site = (req as any).site as SiteContext | undefined;
@@ -224,6 +228,20 @@ export async function adminCreatePost(req: Request, res: Response) {
 
   const slugInput = parsed.data.slug?.trim();
   const slug = await ensureUniqueSlug(slugInput && slugInput.length ? slugInput : parsed.data.title, site.siteId);
+
+  // Plan enforcement: free plan allows limited posts
+  if (auth.role !== "SUPER_ADMIN") {
+    const plan = await getAccountPlan(auth.adminId);
+    if (plan === Plan.FREE) {
+      const postCount = await prisma.blogPost.count({ where: { siteId: site.siteId } });
+      if (postCount >= FREE_POST_LIMIT) {
+        return res.status(402).json({
+          message: "Free plan limit reached. Upgrade to create more posts.",
+          plans: PLANS.filter((p) => p.id !== "FREE"),
+        });
+      }
+    }
+  }
 
   const post = await prisma.blogPost.create({
     data: {
@@ -338,7 +356,11 @@ export async function adminExportPosts(req: Request, res: Response) {
   const site = (req as any).site as SiteContext | undefined;
   if (!site) return res.status(400).json({ message: "Site context missing" });
 
-  const origin = process.env.APP_ORIGIN || `${req.protocol}://${req.get("host") || "localhost"}`;
+  const origin =
+    (process.env.APP_ORIGIN || "")
+      .split(",")[0]
+      .trim()
+      .replace(/\/+$/, "") || `${req.protocol}://${req.get("host") || "localhost"}`;
 
   const posts = await prisma.blogPost.findMany({
     where: { siteId: site.siteId },

@@ -18,6 +18,7 @@ function getSiteId(req: Request) {
   return (
     req.header("x-site-id") ||
     req.query.siteId ||
+    (req.body as any)?.siteId ||
     (req.params as any)?.siteId ||
     (req.params as any)?.id ||
     ""

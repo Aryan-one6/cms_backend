@@ -30,7 +30,8 @@ export async function uploadToS3(opts: { localPath?: string; fileBuffer?: Buffer
     const filename = path.basename(opts.key);
     const relative = `/uploads/${filename}`;
     const baseOrigin =
-      process.env.APP_ORIGIN?.replace(/\/+$/, "") || `http://localhost:${process.env.PORT || 5050}`;
+      process.env.APP_ORIGIN?.split(",")[0]?.trim().replace(/\/+$/, "") ||
+      `http://localhost:${process.env.PORT || 5050}`;
     const absolute = `${baseOrigin}${relative}`;
     return { url: relative, absoluteUrl: absolute, storage: "local" } satisfies UploadResult;
   }

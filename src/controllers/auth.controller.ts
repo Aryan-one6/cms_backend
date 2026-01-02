@@ -1,13 +1,15 @@
 import { Request, Response } from "express";
 import bcrypt from "bcrypt";
-import jwt, { type Secret, type SignOptions } from "jsonwebtoken";
+import { signAdminToken, getCookieOptions } from "../utils/authTokens";
 import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { sendMail } from "../utils/mailer";
 import crypto from "crypto";
-import slugify from "slugify";
 import { SiteRole } from "@prisma/client";
 import { randomBytes } from "crypto";
+import { ensureAccountSubscription } from "../utils/accountSubscription";
+import { ensureDefaultSite } from "../utils/ensureDefaultSite";
+import slugify from "slugify";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -31,37 +33,6 @@ const resetConfirmSchema = z.object({
   password: z.string().min(6),
 });
 
-async function ensureDefaultSite(adminId: string, adminName: string) {
-  const existingSite = await prisma.adminSiteMembership.findFirst({ where: { adminId } });
-  if (existingSite) {
-    // Ensure primary is set if missing
-    const admin = await prisma.adminUser.findUnique({ where: { id: adminId }, select: { primarySiteId: true } });
-    if (!admin?.primarySiteId) {
-      await prisma.adminUser.update({ where: { id: adminId }, data: { primarySiteId: existingSite.siteId } });
-    }
-    return;
-  }
-
-  let base = adminName || "Main Site";
-  if (base.length < 3) base = "site";
-  let slug = slugify(base, { lower: true, strict: true });
-  let i = 1;
-
-  while (true) {
-    const exists = await prisma.site.findUnique({ where: { slug } });
-    if (!exists) break;
-    slug = `${slugify(base, { lower: true, strict: true })}-${i++}`;
-  }
-
-  const site = await prisma.site.create({
-    data: { name: `${adminName || "My"} Site`, slug, domains: [] },
-  });
-
-  await prisma.adminSiteMembership.create({
-    data: { adminId, siteId: site.id, role: SiteRole.OWNER },
-  });
-  await prisma.adminUser.update({ where: { id: adminId }, data: { primarySiteId: site.id } });
-}
 
 function normalizeDomain(domain: string) {
   return domain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
@@ -71,51 +42,25 @@ function generateDomainToken() {
   return randomBytes(16).toString("hex");
 }
 
-function getJwtConfig() {
-  const jwtSecret = process.env.JWT_SECRET as Secret | undefined;
-  if (!jwtSecret) {
-    throw new Error("JWT secret is not configured");
-  }
-  const expiresIn: SignOptions["expiresIn"] =
-    (process.env.JWT_EXPIRES_IN as SignOptions["expiresIn"]) ?? "7d";
-  return { jwtSecret, expiresIn };
-}
-
-function getCookieOptions() {
-  const sameSiteEnv = (process.env.COOKIE_SAMESITE || "").toLowerCase();
-  const sameSite = (sameSiteEnv === "none" ? "none" : sameSiteEnv === "lax" ? "lax" : undefined) as
-    | "lax"
-    | "none"
-    | undefined;
-  const useNone = sameSite === "none";
-  return {
-    httpOnly: true,
-    sameSite: useNone ? "none" : "lax",
-    secure: useNone || process.env.NODE_ENV === "production",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  } as const;
-}
 
 export async function login(req: Request, res: Response) {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json(parsed.error.flatten());
 
   const { email, password } = parsed.data;
-  const { jwtSecret, expiresIn } = getJwtConfig();
-
   const admin = await prisma.adminUser.findUnique({ where: { email } });
   if (!admin) return res.status(401).json({ message: "Invalid credentials" });
+  if (!admin.passwordHash) {
+    return res.status(401).json({ message: "This account uses Google/GitHub login." });
+  }
 
   const ok = await bcrypt.compare(password, admin.passwordHash);
   if (!ok) return res.status(401).json({ message: "Invalid credentials" });
 
   await ensureDefaultSite(admin.id, admin.name);
+  await ensureAccountSubscription(admin.id);
 
-  const token = jwt.sign(
-    { adminId: admin.id, role: admin.role },
-    jwtSecret,
-    { expiresIn }
-  );
+  const token = signAdminToken({ adminId: admin.id, role: admin.role });
 
   // cookie-based auth (best for admin panel)
   res.cookie("accessToken", token, getCookieOptions());
@@ -167,9 +112,9 @@ export async function signup(req: Request, res: Response) {
   }
 
   await prisma.adminUser.update({ where: { id: admin.id }, data: { primarySiteId: site.id } });
+  await ensureAccountSubscription(admin.id);
 
-  const { jwtSecret, expiresIn } = getJwtConfig();
-  const token = jwt.sign({ adminId: admin.id, role: admin.role }, jwtSecret, { expiresIn });
+  const token = signAdminToken({ adminId: admin.id, role: admin.role });
 
   res.cookie("accessToken", token, getCookieOptions());
 
@@ -182,8 +127,36 @@ export async function me(req: Request, res: Response) {
   const auth = (req as any).auth as { adminId: string };
   const admin = await prisma.adminUser.findUnique({
     where: { id: auth.adminId },
-    select: { id: true, name: true, email: true, role: true, createdAt: true },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      createdAt: true,
+      avatarUrl: true,
+      accountSubscription: {
+        select: { plan: true, status: true, expiresAt: true, startedAt: true },
+      },
+    },
   });
+  if (admin && !admin.accountSubscription) {
+    await ensureAccountSubscription(admin.id);
+    const refreshed = await prisma.adminUser.findUnique({
+      where: { id: auth.adminId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        createdAt: true,
+        avatarUrl: true,
+        accountSubscription: {
+          select: { plan: true, status: true, expiresAt: true, startedAt: true },
+        },
+      },
+    });
+    return res.json({ admin: refreshed });
+  }
   return res.json({ admin });
 }
 
@@ -208,7 +181,11 @@ export async function requestPasswordReset(req: Request, res: Response) {
     data: { resetToken: token, resetExpires: expires },
   });
 
-  const baseUrl = process.env.APP_ORIGIN || "http://localhost:5173";
+  const baseUrl =
+    (process.env.APP_ORIGIN || "http://localhost:5173")
+      .split(",")[0]
+      .trim()
+      .replace(/\/+$/, "") || "http://localhost:5173";
   const resetLink = `${baseUrl}/reset-password?token=${token}`;
 
   const hasSmtp = Boolean(process.env.SMTP_HOST && process.env.SMTP_PORT);

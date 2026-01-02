@@ -5,6 +5,7 @@ import { uploadRouter } from "./upload.routes";
 import { sitesRouter } from "./sites.routes";
 import { superAdminRouter } from "./super-admin.routes";
 import { aiRouter } from "./ai.routes";
+import { billingRouter } from "./billing.routes";
 
 export const apiRouter = Router();
 
@@ -14,3 +15,4 @@ apiRouter.use("/", uploadRouter);
 apiRouter.use("/", sitesRouter);
 apiRouter.use("/super-admin", superAdminRouter);
 apiRouter.use("/", aiRouter);
+apiRouter.use("/", billingRouter);

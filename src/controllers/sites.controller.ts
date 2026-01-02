@@ -8,6 +8,8 @@ import { SiteContext } from "../middlewares/site";
 import { ApiTokenRole, Prisma, SiteRole } from "@prisma/client";
 import dns from "dns/promises";
 import axios from "axios";
+import { getAccountPlan, getAccountSubscription } from "../utils/accountSubscription";
+import { getSiteLimit, PLANS } from "../config/plans";
 
 const createSiteSchema = z.object({
   name: z.string().min(2),
@@ -52,10 +54,24 @@ export async function listSites(req: Request, res: Response) {
     where: { adminId: auth.adminId },
     include: { site: { include: { siteDomains: true } } },
   });
+  const accountSub = await getAccountSubscription(auth.adminId);
 
   const memberSites = memberships.map((m) => ({
     ...m.site,
     siteDomains: m.site.siteDomains,
+    subscription: accountSub
+      ? {
+          plan: accountSub.plan,
+          status: accountSub.status,
+          expiresAt: accountSub.expiresAt,
+          startedAt: accountSub.startedAt,
+        }
+      : {
+          plan: "FREE",
+          status: "active",
+          expiresAt: null,
+          startedAt: null,
+        },
     membershipRole: m.role,
   }));
 
@@ -64,7 +80,23 @@ export async function listSites(req: Request, res: Response) {
     const merged = new Map<string, any>();
     for (const site of [
       ...memberSites,
-      ...allSites.map((s) => ({ ...s, membershipRole: SiteRole.OWNER })),
+      ...allSites.map((s) => ({
+        ...s,
+        subscription: accountSub
+          ? {
+              plan: accountSub.plan,
+              status: accountSub.status,
+              expiresAt: accountSub.expiresAt,
+              startedAt: accountSub.startedAt,
+            }
+          : ({
+              plan: "FREE",
+              status: "active",
+              expiresAt: null,
+              startedAt: null,
+            } as any),
+        membershipRole: SiteRole.OWNER,
+      })),
     ]) {
       merged.set(site.id, site);
     }
@@ -78,6 +110,22 @@ export async function createSite(req: Request, res: Response) {
   const auth = (req as any).auth as JwtPayload;
   const parsed = createSiteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+
+  if (auth.role !== "SUPER_ADMIN") {
+    const plan = await getAccountPlan(auth.adminId);
+    const siteLimit = getSiteLimit(plan);
+    if (siteLimit !== null) {
+      const siteCount = await prisma.adminSiteMembership.count({
+        where: { adminId: auth.adminId },
+      });
+      if (siteCount >= siteLimit) {
+        return res.status(402).json({
+          message: "Site limit reached. Upgrade to add more sites.",
+          plans: PLANS.filter((p) => p.id !== "FREE"),
+        });
+      }
+    }
+  }
 
   const firstDomain =
     parsed.data.domains && parsed.data.domains.length > 0
