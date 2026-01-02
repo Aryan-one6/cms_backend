@@ -24,7 +24,7 @@ export async function ensureAccountSubscription(adminId: string) {
   });
   const siteIds = memberships.map((m) => m.siteId);
 
-  let plan = Plan.FREE;
+  let plan: Plan = Plan.FREE;
   let status = "active";
   let expiresAt: Date | null = null;
   let startedAt: Date | null = null;
