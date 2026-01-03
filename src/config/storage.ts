@@ -5,16 +5,24 @@ import fs from "fs/promises";
 type UploadResult = { url: string; absoluteUrl: string; storage: "s3" | "local" };
 
 function hasS3Env() {
-  return Boolean(
+  const hasEnv = Boolean(
     process.env.S3_BUCKET &&
     process.env.S3_REGION &&
     process.env.AWS_ACCESS_KEY_ID &&
     process.env.AWS_SECRET_ACCESS_KEY
   );
+  if (!hasEnv) {
+    console.warn("S3 upload disabled: missing S3 env vars");
+  }
+  return hasEnv;
 }
 
 export function getS3Client() {
   if (!hasS3Env()) return null;
+  console.info("S3 upload enabled", {
+    bucket: process.env.S3_BUCKET,
+    region: process.env.S3_REGION,
+  });
   return new S3Client({
     region: process.env.S3_REGION!,
     credentials: {
@@ -27,6 +35,7 @@ export function getS3Client() {
 export async function uploadToS3(opts: { localPath?: string; fileBuffer?: Buffer; key: string; contentType: string }) {
   const client = getS3Client();
   if (!client) {
+    console.info("S3 upload skipped; using local storage", { key: opts.key });
     const filename = path.basename(opts.key);
     const relative = `/uploads/${filename}`;
     const baseOrigin =
