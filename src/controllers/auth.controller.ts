@@ -33,6 +33,11 @@ const resetConfirmSchema = z.object({
   password: z.string().min(6),
 });
 
+const setPasswordSchema = z.object({
+  password: z.string().min(6),
+  email: z.string().email().optional(),
+});
+
 
 function normalizeDomain(domain: string) {
   return domain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
@@ -66,7 +71,13 @@ export async function login(req: Request, res: Response) {
   res.cookie("accessToken", token, getCookieOptions());
 
   return res.json({
-    admin: { id: admin.id, name: admin.name, email: admin.email, role: admin.role },
+    admin: {
+      id: admin.id,
+      name: admin.name,
+      email: admin.email,
+      role: admin.role,
+      hasPassword: Boolean(admin.passwordHash),
+    },
   });
 }
 
@@ -119,45 +130,50 @@ export async function signup(req: Request, res: Response) {
   res.cookie("accessToken", token, getCookieOptions());
 
   return res.status(201).json({
-    admin: { id: admin.id, name: admin.name, email: admin.email, role: admin.role },
+    admin: {
+      id: admin.id,
+      name: admin.name,
+      email: admin.email,
+      role: admin.role,
+      hasPassword: Boolean(admin.passwordHash),
+    },
   });
+}
+
+const adminSelect = {
+  id: true,
+  name: true,
+  email: true,
+  role: true,
+  createdAt: true,
+  avatarUrl: true,
+  passwordHash: true,
+  accountSubscription: {
+    select: { plan: true, status: true, expiresAt: true, startedAt: true },
+  },
+};
+
+function toAdminResponse<T extends { passwordHash?: string | null }>(admin: T | null) {
+  if (!admin) return null;
+  const { passwordHash, ...rest } = admin;
+  return { ...rest, hasPassword: Boolean(passwordHash) };
 }
 
 export async function me(req: Request, res: Response) {
   const auth = (req as any).auth as { adminId: string };
   const admin = await prisma.adminUser.findUnique({
     where: { id: auth.adminId },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      role: true,
-      createdAt: true,
-      avatarUrl: true,
-      accountSubscription: {
-        select: { plan: true, status: true, expiresAt: true, startedAt: true },
-      },
-    },
+    select: adminSelect,
   });
   if (admin && !admin.accountSubscription) {
     await ensureAccountSubscription(admin.id);
     const refreshed = await prisma.adminUser.findUnique({
       where: { id: auth.adminId },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        createdAt: true,
-        avatarUrl: true,
-        accountSubscription: {
-          select: { plan: true, status: true, expiresAt: true, startedAt: true },
-        },
-      },
+      select: adminSelect,
     });
-    return res.json({ admin: refreshed });
+    return res.json({ admin: toAdminResponse(refreshed) });
   }
-  return res.json({ admin });
+  return res.json({ admin: toAdminResponse(admin) });
 }
 
 export async function logout(_req: Request, res: Response) {
@@ -233,4 +249,47 @@ export async function confirmPasswordReset(req: Request, res: Response) {
   });
 
   return res.json({ ok: true });
+}
+
+export async function setPassword(req: Request, res: Response) {
+  const auth = (req as any).auth as { adminId: string };
+  const parsed = setPasswordSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+
+  const admin = await prisma.adminUser.findUnique({
+    where: { id: auth.adminId },
+    select: { id: true, name: true, email: true, role: true, passwordHash: true },
+  });
+
+  if (!admin) return res.status(404).json({ message: "Admin not found" });
+  if (admin.passwordHash) {
+    return res.status(400).json({ message: "Password already set. Use reset password instead." });
+  }
+
+  const passwordHash = await bcrypt.hash(parsed.data.password, 10);
+  const nextEmail = parsed.data.email?.trim();
+  if (nextEmail && nextEmail !== admin.email) {
+    const existing = await prisma.adminUser.findUnique({ where: { email: nextEmail } });
+    if (existing) {
+      return res.status(400).json({ message: "Email already in use." });
+    }
+  }
+  const updated = await prisma.adminUser.update({
+    where: { id: admin.id },
+    data: {
+      passwordHash,
+      ...(nextEmail && nextEmail !== admin.email ? { email: nextEmail } : {}),
+    },
+    select: { id: true, name: true, email: true, role: true, passwordHash: true },
+  });
+
+  return res.json({
+    admin: {
+      id: updated.id,
+      name: updated.name,
+      email: updated.email,
+      role: updated.role,
+      hasPassword: Boolean(updated.passwordHash),
+    },
+  });
 }

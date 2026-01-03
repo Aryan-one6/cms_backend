@@ -195,6 +195,7 @@ export async function googleOAuthCallback(req: Request, res: Response) {
       name: name || email.split("@")[0],
       avatarUrl: picture,
     });
+    const needsPassword = !admin.passwordHash;
 
     await ensureDefaultSite(admin.id, admin.name);
     await ensureAccountSubscription(admin.id);
@@ -202,7 +203,10 @@ export async function googleOAuthCallback(req: Request, res: Response) {
     const token = signAdminToken({ adminId: admin.id, role: admin.role });
     res.cookie("accessToken", token, getCookieOptions());
     clearOAuthCookies(res);
-    return redirectToApp(res, redirectPath, origin);
+    const nextPath = needsPassword
+      ? `/set-password?next=${encodeURIComponent(redirectPath)}`
+      : redirectPath;
+    return redirectToApp(res, nextPath, origin);
   } catch (err) {
     console.error("Google OAuth error", err);
     clearOAuthCookies(res);
@@ -298,6 +302,7 @@ export async function githubOAuthCallback(req: Request, res: Response) {
       name: name || login || email.split("@")[0],
       avatarUrl: avatar_url,
     });
+    const needsPassword = !admin.passwordHash;
 
     await ensureDefaultSite(admin.id, admin.name);
     await ensureAccountSubscription(admin.id);
@@ -305,7 +310,10 @@ export async function githubOAuthCallback(req: Request, res: Response) {
     const token = signAdminToken({ adminId: admin.id, role: admin.role });
     res.cookie("accessToken", token, getCookieOptions());
     clearOAuthCookies(res);
-    return redirectToApp(res, redirectPath, origin);
+    const nextPath = needsPassword
+      ? `/set-password?next=${encodeURIComponent(redirectPath)}`
+      : redirectPath;
+    return redirectToApp(res, nextPath, origin);
   } catch (err) {
     console.error("GitHub OAuth error", err);
     clearOAuthCookies(res);

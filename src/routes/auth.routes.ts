@@ -6,6 +6,7 @@ import {
   signup,
   requestPasswordReset,
   confirmPasswordReset,
+  setPassword,
 } from "../controllers/auth.controller";
 import {
   startGoogleOAuth,
@@ -21,6 +22,7 @@ authRouter.post("/login", login);
 authRouter.post("/signup", signup);
 authRouter.post("/password-reset/request", requestPasswordReset);
 authRouter.post("/password-reset/confirm", confirmPasswordReset);
+authRouter.post("/password/set", requireAuth, setPassword);
 authRouter.get("/me", requireAuth, me);
 authRouter.post("/logout", logout);
 authRouter.get("/oauth/google", startGoogleOAuth);
