@@ -10,6 +10,9 @@ import path from "path";
 
 const app = express();
 
+// Trust Vercel/Proxies so rate limiting & IP detection work correctly
+app.set("trust proxy", 1);
+
 const defaultCorsOrigins = [
   "http://localhost:5174",
   "http://127.0.0.1:5173",
