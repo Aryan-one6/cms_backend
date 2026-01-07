@@ -2,6 +2,8 @@ import { Request, Response } from "express";
 import { z } from "zod";
 import slugify from "slugify";
 import { prisma } from "../config/prisma";
+import { uploadToS3, buildUploadKey } from "../config/storage";
+import axios from "axios";
 import { JwtPayload } from "../middlewares/auth";
 import { SiteContext, SiteTokenContext } from "../middlewares/site";
 import { SiteRole, Plan } from "@prisma/client";
@@ -25,6 +27,8 @@ const importPostSchema = z.object({
   excerpt: z.string().optional(),
   coverImageUrl: z.string().optional(),
   coverImageAbsolute: z.string().optional(),
+  coverImageData: z.string().optional(), // base64 data URI or raw base64
+  coverImageMime: z.string().optional(),
   contentHtml: z.string().min(1),
   tags: z.array(z.string()).optional(),
   status: z.enum(["DRAFT", "PUBLISHED"]).optional(),
@@ -140,6 +144,8 @@ function normalizeImportPost(input: any) {
 
   const status = get(["status", "Status"]);
   const publishedAt = get(["publishedAt", "PublishedAt", "published_at"]);
+  const coverImageData = get(["coverImageData", "cover_image_data", "CoverImageData"]);
+  const coverImageMime = get(["coverImageMime", "cover_image_mime", "CoverImageMime"]);
 
   return {
     title,
@@ -147,6 +153,8 @@ function normalizeImportPost(input: any) {
     excerpt: get(["excerpt", "Excerpt"]),
     coverImageUrl: get(["coverImageUrl", "cover_image_url", "CoverImageUrl"]),
     coverImageAbsolute: get(["coverImageAbsolute", "cover_image_absolute", "CoverImageAbsolute"]),
+    coverImageData,
+    coverImageMime,
     contentHtml: get(["contentHtml", "content_html", "ContentHtml"]) || "<p></p>",
     tags,
     status,
@@ -387,6 +395,9 @@ export async function adminExportPosts(req: Request, res: Response) {
       p.coverImageUrl && !/^https?:\/\//i.test(p.coverImageUrl)
         ? `${origin}${p.coverImageUrl}`
         : p.coverImageUrl,
+    // Will be populated below if fetch succeeds
+    coverImageData: undefined as string | undefined,
+    coverImageMime: undefined as string | undefined,
     contentHtml: p.contentHtml,
     tags: p.tags.map((t) => t.tag.name),
     status: p.status,
@@ -394,6 +405,23 @@ export async function adminExportPosts(req: Request, res: Response) {
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
   }));
+
+  // Optionally embed image data for JSON exports
+  if (req.query.format !== "csv") {
+    for (const post of payload) {
+      if (!post.coverImageAbsolute) continue;
+      try {
+        const resp = await axios.get(post.coverImageAbsolute, { responseType: "arraybuffer" });
+        const mime = resp.headers["content-type"] || "image/png";
+        const b64 = Buffer.from(resp.data as any).toString("base64");
+        post.coverImageData = b64;
+        post.coverImageMime = mime;
+      } catch (err) {
+        // Ignore download errors; leave data undefined
+        continue;
+      }
+    }
+  }
 
   if (req.query.format === "csv") {
     const csv = postsToCsv(payload);
@@ -460,13 +488,25 @@ export async function adminImportPosts(req: Request, res: Response) {
     const status = data.status === "PUBLISHED" ? "PUBLISHED" : "DRAFT";
     const publishedAt = status === "PUBLISHED" ? (data.publishedAt ? new Date(data.publishedAt) : new Date()) : null;
 
+    let coverImageUrl = data.coverImageUrl || data.coverImageAbsolute;
+
+    // If base64 image data is provided, upload and use that
+    if (data.coverImageData) {
+      const base64 = data.coverImageData.replace(/^data:[^,]+,/, "");
+      const mime = data.coverImageMime || "image/png";
+      const buffer = Buffer.from(base64, "base64");
+      const key = buildUploadKey(`${Date.now()}-imported-cover`);
+      const upload = await uploadToS3({ fileBuffer: buffer, key, contentType: mime });
+      coverImageUrl = upload.url || upload.absoluteUrl;
+    }
+
     const post = await prisma.blogPost.create({
       data: {
         siteId: site.siteId,
         title: data.title,
         slug,
         excerpt: data.excerpt,
-        coverImageUrl: data.coverImageUrl || data.coverImageAbsolute,
+        coverImageUrl,
         contentHtml: data.contentHtml,
         authorId: auth.adminId,
         status,

@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { requireAuth } from "../middlewares/auth";
 import { requireSiteAccess } from "../middlewares/site";
-import { generatePostDraft, generateCoverImage } from "../controllers/ai.controller";
+import { generatePostDraft } from "../controllers/content.controller";
+import { generateCoverImage } from "../controllers/image.controller";
 
 export const aiRouter = Router();
 
