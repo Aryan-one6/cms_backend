@@ -249,6 +249,21 @@ export async function adminCreatePost(req: Request, res: Response) {
         });
       }
     }
+
+    if (plan === Plan.STARTER) {
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
+      const monthlyPosts = await prisma.blogPost.count({
+        where: { siteId: site.siteId, createdAt: { gte: startOfMonth } },
+      });
+      if (monthlyPosts >= 15) {
+        return res.status(402).json({
+          message: "Starter plan allows up to 15 posts per month. Upgrade for more.",
+          plans: PLANS.filter((p) => p.id !== "FREE"),
+        });
+      }
+    }
   }
 
   const post = await prisma.blogPost.create({

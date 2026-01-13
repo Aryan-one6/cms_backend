@@ -3,8 +3,8 @@ import bcrypt from "bcrypt";
 import { prisma } from "../config/prisma";
 
 async function run() {
-  const email = "connect@triadflair.com";
-  const password = "Admin@12345";
+  const email = process.env.SUPER_ADMIN_EMAIL || "naresh@starluxmarketingservices.com";
+  const password = process.env.SUPER_ADMIN_PASSWORD || "Aryan@321";
   const passwordHash = await bcrypt.hash(password, 10);
 
   const user = await prisma.adminUser.upsert({

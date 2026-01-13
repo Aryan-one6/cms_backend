@@ -12,7 +12,7 @@ enum AdminRole {
   EDITOR
 }
 
-enum AdminStatus {
+enum AdminStatus { 
   ACTIVE
   SUSPENDED
 }
@@ -51,6 +51,8 @@ enum PostStatus {
 
 enum Plan {
   FREE
+  STARTER
+  GROWTH
   PRO
   ENTERPRISE
 }

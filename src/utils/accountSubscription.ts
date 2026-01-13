@@ -3,8 +3,10 @@ import { prisma } from "../config/prisma";
 
 const PLAN_RANK: Record<Plan, number> = {
   [Plan.FREE]: 0,
-  [Plan.PRO]: 1,
-  [Plan.ENTERPRISE]: 2,
+  [Plan.STARTER]: 1,
+  [Plan.GROWTH]: 2,
+  [Plan.PRO]: 3,
+  [Plan.ENTERPRISE]: 4,
 };
 
 function pickBestPlan(plans: Plan[]): Plan {

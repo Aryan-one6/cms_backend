@@ -1,6 +1,20 @@
 // Prisma config - CommonJS
 require("dotenv/config");
-const { defineConfig, env } = require("prisma/config");
+const { defineConfig } = require("prisma/config");
+
+const databaseUrl =
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_PRISMA_URL ||
+  process.env.POSTGRES_URL_NON_POOLING ||
+  process.env.POSTGRES_URL;
+
+if (!databaseUrl) {
+  throw new Error(
+    "Missing database connection string. Set DATABASE_URL or a Vercel Postgres env (POSTGRES_PRISMA_URL/POSTGRES_URL_NON_POOLING/POSTGRES_URL).",
+  );
+}
+
+process.env.DATABASE_URL = databaseUrl;
 
 module.exports = defineConfig({
   schema: "prisma/schema.prisma",
@@ -9,6 +23,6 @@ module.exports = defineConfig({
   },
   engine: "classic",
   datasource: {
-    url: env("DATABASE_URL"),
+    url: databaseUrl,
   },
 });

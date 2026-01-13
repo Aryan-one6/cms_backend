@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { prisma } from "../config/prisma";
 import { findPlan, PLANS } from "../config/plans";
 import { JwtPayload } from "../middlewares/auth";
+import { findCouponByCode, isCouponValid } from "../utils/couponStore";
 
 export async function listPlans(_req: Request, res: Response) {
   res.json({ plans: PLANS.filter((p) => p.id !== "FREE") });
@@ -13,10 +14,16 @@ export async function createOrder(req: Request, res: Response) {
   const auth = (req as any).auth as JwtPayload;
 
   try {
-    const { planId, coupon } = req.body as { planId?: string; coupon?: string };
+    const { planId, coupon, months } = req.body as { planId?: string; coupon?: string; months?: number };
     if (!planId) return res.status(400).json({ message: "Plan is required" });
     const plan = findPlan(planId);
     if (!plan || plan.id === "FREE") return res.status(400).json({ message: "Invalid plan" });
+
+    const billingMonths = Number.isFinite(months) && months ? Math.max(1, Math.floor(months)) : 1;
+
+    if (plan.id === "ENTERPRISE" || plan.pricePaise === 0) {
+      return res.json({ contact: true, plan, message: "Enterprise is contact-only. Our team will reach out." });
+    }
 
     // Coupon shortcuts
     const couponCode = (coupon || "").toString().trim().toUpperCase();
@@ -34,13 +41,44 @@ export async function createOrder(req: Request, res: Response) {
     if (!keyId || !keySecret) return res.status(500).json({ message: "Payment keys missing" });
 
     const gstRate = 0.18;
-    const subtotal = plan.pricePaise;
-    const gst = Math.round(subtotal * gstRate);
-    let total = subtotal + gst;
+    const baseSubtotal = plan.pricePaise * billingMonths;
+    let subtotal = baseSubtotal;
+    let discount = 0;
+    let appliedCoupon: string | null = null;
 
     if (couponCode === "ONEINR") {
-      total = 100; // 1 INR in paise
+      subtotal = 100; // 1 INR in paise
+      discount = Math.max(0, baseSubtotal - subtotal);
+      appliedCoupon = "ONEINR";
+    } else if (couponCode && couponCode !== "FREE100") {
+      const coupon = await findCouponByCode(couponCode);
+      if (coupon) {
+        if (!isCouponValid(coupon)) {
+          return res.status(400).json({ message: "Coupon is expired or inactive." });
+        }
+        if (coupon.applicablePlans?.length && !coupon.applicablePlans.includes(plan.plan)) {
+          return res.status(400).json({ message: "Coupon not applicable to this plan." });
+        }
+        if (coupon.minOrderPaise != null && subtotal < coupon.minOrderPaise) {
+          return res.status(400).json({ message: "Plan price does not meet the minimum order amount for this coupon." });
+        }
+        if (coupon.minMonths != null && billingMonths < coupon.minMonths) {
+          return res.status(400).json({ message: `Coupon requires at least ${coupon.minMonths} month(s) upfront.` });
+        }
+        const amountDiscount = coupon.amountOffPaise ?? 0;
+        const percentDiscount = coupon.percentOff ? Math.round((subtotal * coupon.percentOff) / 100) : 0;
+        discount = Math.max(amountDiscount, percentDiscount);
+        discount = Math.min(discount, subtotal);
+        subtotal = subtotal - discount;
+        appliedCoupon = coupon.code;
+      } else if (couponCode) {
+        // unknown coupon provided
+        return res.status(400).json({ message: "Invalid coupon code." });
+      }
     }
+
+    const gst = Math.round(subtotal * gstRate);
+    let total = subtotal + gst;
 
     const razorpay = new Razorpay({ key_id: keyId, key_secret: keySecret });
     const shortAdmin = auth.adminId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 12);
@@ -49,13 +87,13 @@ export async function createOrder(req: Request, res: Response) {
       amount: total,
       currency: "INR",
       receipt,
-      notes: { plan: plan.id, adminId: auth.adminId, gst: gst.toString() },
+      notes: { plan: plan.id, adminId: auth.adminId, gst: gst.toString(), coupon: appliedCoupon || "", months: billingMonths.toString() },
     });
 
     res.json({
       order,
       keyId,
-      plan: { ...plan, gst, total },
+      plan: { ...plan, gst, total, subtotal, discount, appliedCoupon, months: billingMonths },
     });
   } catch (err: any) {
     console.error("Create order failed", err?.response?.data || err);

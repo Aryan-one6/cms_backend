@@ -5,6 +5,12 @@ import {
   deletePostSuper,
   deleteSiteSuper,
   deleteUser,
+  listSubscriptions,
+  getMetrics,
+  listCouponsSuper,
+  createCouponSuper,
+  updateCouponSuper,
+  deleteCouponSuper,
   listPosts,
   listSites,
   listUsers,
@@ -31,3 +37,13 @@ superAdminRouter.delete("/sites/:siteId", deleteSiteSuper);
 // Posts
 superAdminRouter.get("/posts", listPosts);
 superAdminRouter.delete("/posts/:postId", deletePostSuper);
+
+// Subscriptions & metrics
+superAdminRouter.get("/subscriptions", listSubscriptions);
+superAdminRouter.get("/metrics", getMetrics);
+
+// Coupons (file-backed store)
+superAdminRouter.get("/coupons", listCouponsSuper);
+superAdminRouter.post("/coupons", createCouponSuper);
+superAdminRouter.patch("/coupons/:id", updateCouponSuper);
+superAdminRouter.delete("/coupons/:id", deleteCouponSuper);
