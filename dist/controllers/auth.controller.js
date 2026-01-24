@@ -190,10 +190,53 @@ async function requestPasswordReset(req, res) {
     const hasSmtp = Boolean(process.env.SMTP_HOST && process.env.SMTP_PORT);
     if (hasSmtp) {
         try {
+            const brand = "TRIAD CMS";
+            const brandTagline = "AI-Powered Headless CMS";
+            const logoUrl = process.env.BRAND_LOGO_URL ||
+                `${baseUrl}/logo.png`;
+            const year = new Date().getFullYear();
+            const html = `
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="padding:32px 16px;font-family:Arial,Helvetica,sans-serif;color:#0b1223;background:#f8fafc;">
+          <tr>
+            <td align="center">
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e2e8f0;box-shadow:0 10px 30px rgba(15,23,42,0.06);">
+                <tr>
+                  <td style="padding:24px 24px 12px 24px;border-bottom:1px solid #e2e8f0;" align="center">
+                    <img src="${logoUrl}" width="64" height="64" alt="${brand} logo" style="display:block;margin:0 auto 12px auto;border-radius:14px;" />
+                    <div style="font-size:20px;font-weight:700;color:#0f172a;letter-spacing:0.02em;">${brand}</div>
+                    <div style="font-size:12px;color:#475569;margin-top:4px;">${brandTagline}</div>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:24px 24px 12px 24px;">
+                    <div style="font-size:12px;font-weight:700;color:#0ea5e9;letter-spacing:0.16em;text-transform:uppercase;">Security</div>
+                    <div style="font-size:22px;font-weight:700;color:#0f172a;margin:6px 0 12px 0;">Password reset request</div>
+                    <p style="margin:0 0 12px 0;font-size:15px;color:#0f172a;">Hello ${admin.name},</p>
+                    <p style="margin:0 0 16px 0;font-size:15px;color:#0f172a;">We received a request to reset the password for your ${brand} account. Click the button below to choose a new password.</p>
+                    <p style="margin:0 0 20px 0;" align="center">
+                      <a href="${resetLink}" style="display:inline-block;padding:12px 20px;background:linear-gradient(135deg,#22c55e,#0ea5e9);color:#ffffff;text-decoration:none;border-radius:12px;font-weight:700;box-shadow:0 8px 18px rgba(14,165,233,0.28);">Reset password</a>
+                    </p>
+                    <p style="margin:0 0 12px 0;font-size:13px;color:#475569;">If the button doesn't work, copy and paste this link into your browser:</p>
+                    <p style="margin:0 0 16px 0;word-break:break-all;font-size:13px;">
+                      <a href="${resetLink}" style="color:#0f172a;">${resetLink}</a>
+                    </p>
+                    <p style="margin:0 0 8px 0;font-size:13px;color:#475569;">This link expires in 30 minutes. If you didn't request this, you can safely ignore this email.</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:16px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:12px;color:#64748b;">
+                    © ${year} ${brand}. All rights reserved.
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      `;
             await (0, mailer_1.sendMail)({
                 to: admin.email,
-                subject: "Reset your Sapphire CMS password",
-                html: `<p>Hello ${admin.name},</p><p>Click the link to reset your password:</p><p><a href="${resetLink}">${resetLink}</a></p><p>This link expires in 30 minutes.</p>`,
+                subject: "Reset your TRIAD CMS password",
+                html,
             });
         }
         catch (err) {

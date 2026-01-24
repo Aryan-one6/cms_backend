@@ -7,7 +7,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const prisma_1 = require("../config/prisma");
 async function run() {
-    const email = process.env.SUPER_ADMIN_EMAIL || "naresh@starluxmarketingservices.com";
+    const email = process.env.SUPER_ADMIN_EMAIL || "connect@triadflair.com";
     const password = process.env.SUPER_ADMIN_PASSWORD || "Aryan@321";
     const passwordHash = await bcrypt_1.default.hash(password, 10);
     const user = await prisma_1.prisma.adminUser.upsert({
