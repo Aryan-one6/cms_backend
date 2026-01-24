@@ -17,6 +17,12 @@ const createSchema = z.object({
   coverImageUrl: z.string().optional(),
   contentHtml: z.string().min(1),
   tags: z.array(z.string()).optional(), // tag names
+  primaryKeyword: z.string().optional(),
+  secondaryKeywords: z.array(z.string()).optional(),
+  metaTitle: z.string().optional(),
+  metaDescription: z.string().optional(),
+  serpAnalysisId: z.string().optional(),
+  seoScore: z.number().int().min(0).max(100).optional(),
 });
 
 const updateSchema = createSchema.partial();
@@ -33,6 +39,12 @@ const importPostSchema = z.object({
   tags: z.array(z.string()).optional(),
   status: z.enum(["DRAFT", "PUBLISHED"]).optional(),
   publishedAt: z.string().datetime().optional(),
+  primaryKeyword: z.string().optional(),
+  secondaryKeywords: z.array(z.string()).optional(),
+  metaTitle: z.string().optional(),
+  metaDescription: z.string().optional(),
+  serpAnalysisId: z.string().optional(),
+  seoScore: z.number().int().min(0).max(100).optional(),
 });
 
 const importSchema = z.object({
@@ -142,6 +154,17 @@ function normalizeImportPost(input: any) {
     ? tagsRaw.split(/[,|;]/).map((t) => t.trim()).filter(Boolean)
     : undefined;
 
+  const secondaryKeywordsRaw = get(["secondaryKeywords", "secondary_keywords", "SecondaryKeywords"]);
+  const secondaryKeywords = secondaryKeywordsRaw
+    ? secondaryKeywordsRaw.split(/[,|;]/).map((t) => t.trim()).filter(Boolean)
+    : undefined;
+
+  const primaryKeyword = get(["primaryKeyword", "PrimaryKeyword"]);
+  const metaTitle = get(["metaTitle", "MetaTitle"]);
+  const metaDescription = get(["metaDescription", "MetaDescription"]);
+  const serpAnalysisId = get(["serpAnalysisId", "SerpAnalysisId"]);
+  const seoScoreRaw = get(["seoScore", "SeoScore"]);
+
   const status = get(["status", "Status"]);
   const publishedAt = get(["publishedAt", "PublishedAt", "published_at"]);
   const coverImageData = get(["coverImageData", "cover_image_data", "CoverImageData"]);
@@ -157,6 +180,12 @@ function normalizeImportPost(input: any) {
     coverImageMime,
     contentHtml: get(["contentHtml", "content_html", "ContentHtml"]) || "<p></p>",
     tags,
+    primaryKeyword,
+    secondaryKeywords,
+    metaTitle,
+    metaDescription,
+    serpAnalysisId,
+    seoScore: seoScoreRaw ? Number(seoScoreRaw) : undefined,
     status,
     publishedAt,
   };
@@ -275,6 +304,12 @@ export async function adminCreatePost(req: Request, res: Response) {
       coverImageUrl: parsed.data.coverImageUrl,
       contentHtml: parsed.data.contentHtml,
       authorId: auth.adminId,
+      primaryKeyword: parsed.data.primaryKeyword,
+      secondaryKeywords: parsed.data.secondaryKeywords || [],
+      metaTitle: parsed.data.metaTitle,
+      metaDescription: parsed.data.metaDescription,
+      serpAnalysisId: parsed.data.serpAnalysisId,
+      seoScore: parsed.data.seoScore ?? 0,
     },
   });
 
@@ -330,6 +365,12 @@ export async function adminUpdatePost(req: Request, res: Response) {
       excerpt: parsed.data.excerpt ?? undefined,
       coverImageUrl: parsed.data.coverImageUrl ?? undefined,
       contentHtml: parsed.data.contentHtml ?? undefined,
+      primaryKeyword: parsed.data.primaryKeyword ?? undefined,
+      secondaryKeywords: parsed.data.secondaryKeywords ?? undefined,
+      metaTitle: parsed.data.metaTitle ?? undefined,
+      metaDescription: parsed.data.metaDescription ?? undefined,
+      serpAnalysisId: parsed.data.serpAnalysisId ?? undefined,
+      seoScore: parsed.data.seoScore ?? undefined,
     },
   });
 
@@ -415,6 +456,12 @@ export async function adminExportPosts(req: Request, res: Response) {
     coverImageMime: undefined as string | undefined,
     contentHtml: p.contentHtml,
     tags: p.tags.map((t) => t.tag.name),
+    primaryKeyword: p.primaryKeyword,
+    secondaryKeywords: p.secondaryKeywords,
+    metaTitle: p.metaTitle,
+    metaDescription: p.metaDescription,
+    serpAnalysisId: p.serpAnalysisId,
+    seoScore: p.seoScore,
     status: p.status,
     publishedAt: p.publishedAt,
     createdAt: p.createdAt,
@@ -526,6 +573,12 @@ export async function adminImportPosts(req: Request, res: Response) {
         authorId: auth.adminId,
         status,
         publishedAt,
+        primaryKeyword: data.primaryKeyword,
+        secondaryKeywords: data.secondaryKeywords || [],
+        metaTitle: data.metaTitle,
+        metaDescription: data.metaDescription,
+        serpAnalysisId: data.serpAnalysisId,
+        seoScore: data.seoScore ?? 0,
       },
     });
 

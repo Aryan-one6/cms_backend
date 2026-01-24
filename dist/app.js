@@ -13,6 +13,8 @@ const routes_1 = require("./routes");
 const cors_2 = require("./config/cors");
 const path_1 = __importDefault(require("path"));
 const app = (0, express_1.default)();
+// Trust Vercel/Proxies so rate limiting & IP detection work correctly
+app.set("trust proxy", 1);
 const defaultCorsOrigins = [
     "http://localhost:5174",
     "http://127.0.0.1:5173",
@@ -44,7 +46,9 @@ app.use((0, cors_1.default)({
 }));
 app.use(limiter);
 app.use((0, morgan_1.default)("dev"));
-app.use(express_1.default.json({ limit: "2mb" }));
+// Allow larger payloads for post imports that can include base64 images
+app.use(express_1.default.json({ limit: "30mb" }));
+app.use(express_1.default.urlencoded({ limit: "30mb", extended: true }));
 app.use((0, cookie_parser_1.default)());
 app.get("/health", (_req, res) => res.json({ ok: true }));
 // Serve locally stored uploads when S3 is not configured

@@ -1,1 +1,19 @@
-[]
+[
+  {
+    "code": "XYZFIRST",
+    "amountOffPaise": 50000,
+    "maxRedemptions": 500,
+    "expiresAt": "2026-03-20T00:00:00.000Z",
+    "validFrom": "2026-01-14T00:00:00.000Z",
+    "applicablePlans": [
+      "PRO"
+    ],
+    "minOrderPaise": 200000,
+    "minMonths": 1,
+    "active": true,
+    "redeemed": 0,
+    "id": "64b4f32b-159b-4a75-882c-06df630db132",
+    "createdAt": "2026-01-09T11:39:01.161Z",
+    "updatedAt": "2026-01-09T11:39:01.161Z"
+  }
+]

@@ -18,3 +18,11 @@ exports.superAdminRouter.delete("/sites/:siteId", superAdmin_controller_1.delete
 // Posts
 exports.superAdminRouter.get("/posts", superAdmin_controller_1.listPosts);
 exports.superAdminRouter.delete("/posts/:postId", superAdmin_controller_1.deletePostSuper);
+// Subscriptions & metrics
+exports.superAdminRouter.get("/subscriptions", superAdmin_controller_1.listSubscriptions);
+exports.superAdminRouter.get("/metrics", superAdmin_controller_1.getMetrics);
+// Coupons (file-backed store)
+exports.superAdminRouter.get("/coupons", superAdmin_controller_1.listCouponsSuper);
+exports.superAdminRouter.post("/coupons", superAdmin_controller_1.createCouponSuper);
+exports.superAdminRouter.patch("/coupons/:id", superAdmin_controller_1.updateCouponSuper);
+exports.superAdminRouter.delete("/coupons/:id", superAdmin_controller_1.deleteCouponSuper);

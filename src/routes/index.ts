@@ -6,6 +6,7 @@ import { sitesRouter } from "./sites.routes";
 import { superAdminRouter } from "./super-admin.routes";
 import { aiRouter } from "./ai.routes";
 import { billingRouter } from "./billing.routes";
+import { seoRouter } from "./seo.routes";
 
 export const apiRouter = Router();
 
@@ -16,3 +17,4 @@ apiRouter.use("/", sitesRouter);
 apiRouter.use("/super-admin", superAdminRouter);
 apiRouter.use("/", aiRouter);
 apiRouter.use("/", billingRouter);
+apiRouter.use("/", seoRouter);

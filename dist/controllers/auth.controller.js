@@ -9,6 +9,7 @@ exports.me = me;
 exports.logout = logout;
 exports.requestPasswordReset = requestPasswordReset;
 exports.confirmPasswordReset = confirmPasswordReset;
+exports.setPassword = setPassword;
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const authTokens_1 = require("../utils/authTokens");
 const zod_1 = require("zod");
@@ -38,6 +39,10 @@ const resetConfirmSchema = zod_1.z.object({
     token: zod_1.z.string().min(10),
     password: zod_1.z.string().min(6),
 });
+const setPasswordSchema = zod_1.z.object({
+    password: zod_1.z.string().min(6),
+    email: zod_1.z.string().email().optional(),
+});
 function normalizeDomain(domain) {
     return domain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
 }
@@ -64,7 +69,13 @@ async function login(req, res) {
     // cookie-based auth (best for admin panel)
     res.cookie("accessToken", token, (0, authTokens_1.getCookieOptions)());
     return res.json({
-        admin: { id: admin.id, name: admin.name, email: admin.email, role: admin.role },
+        admin: {
+            id: admin.id,
+            name: admin.name,
+            email: admin.email,
+            role: admin.role,
+            hasPassword: Boolean(admin.passwordHash),
+        },
     });
 }
 async function signup(req, res) {
@@ -110,44 +121,48 @@ async function signup(req, res) {
     const token = (0, authTokens_1.signAdminToken)({ adminId: admin.id, role: admin.role });
     res.cookie("accessToken", token, (0, authTokens_1.getCookieOptions)());
     return res.status(201).json({
-        admin: { id: admin.id, name: admin.name, email: admin.email, role: admin.role },
+        admin: {
+            id: admin.id,
+            name: admin.name,
+            email: admin.email,
+            role: admin.role,
+            hasPassword: Boolean(admin.passwordHash),
+        },
     });
+}
+const adminSelect = {
+    id: true,
+    name: true,
+    email: true,
+    role: true,
+    createdAt: true,
+    avatarUrl: true,
+    passwordHash: true,
+    accountSubscription: {
+        select: { plan: true, status: true, expiresAt: true, startedAt: true },
+    },
+};
+function toAdminResponse(admin) {
+    if (!admin)
+        return null;
+    const { passwordHash, ...rest } = admin;
+    return { ...rest, hasPassword: Boolean(passwordHash) };
 }
 async function me(req, res) {
     const auth = req.auth;
     const admin = await prisma_1.prisma.adminUser.findUnique({
         where: { id: auth.adminId },
-        select: {
-            id: true,
-            name: true,
-            email: true,
-            role: true,
-            createdAt: true,
-            avatarUrl: true,
-            accountSubscription: {
-                select: { plan: true, status: true, expiresAt: true, startedAt: true },
-            },
-        },
+        select: adminSelect,
     });
     if (admin && !admin.accountSubscription) {
         await (0, accountSubscription_1.ensureAccountSubscription)(admin.id);
         const refreshed = await prisma_1.prisma.adminUser.findUnique({
             where: { id: auth.adminId },
-            select: {
-                id: true,
-                name: true,
-                email: true,
-                role: true,
-                createdAt: true,
-                avatarUrl: true,
-                accountSubscription: {
-                    select: { plan: true, status: true, expiresAt: true, startedAt: true },
-                },
-            },
+            select: adminSelect,
         });
-        return res.json({ admin: refreshed });
+        return res.json({ admin: toAdminResponse(refreshed) });
     }
-    return res.json({ admin });
+    return res.json({ admin: toAdminResponse(admin) });
 }
 async function logout(_req, res) {
     const opts = (0, authTokens_1.getCookieOptions)();
@@ -213,4 +228,44 @@ async function confirmPasswordReset(req, res) {
         data: { passwordHash, resetToken: null, resetExpires: null },
     });
     return res.json({ ok: true });
+}
+async function setPassword(req, res) {
+    const auth = req.auth;
+    const parsed = setPasswordSchema.safeParse(req.body);
+    if (!parsed.success)
+        return res.status(400).json(parsed.error.flatten());
+    const admin = await prisma_1.prisma.adminUser.findUnique({
+        where: { id: auth.adminId },
+        select: { id: true, name: true, email: true, role: true, passwordHash: true },
+    });
+    if (!admin)
+        return res.status(404).json({ message: "Admin not found" });
+    if (admin.passwordHash) {
+        return res.status(400).json({ message: "Password already set. Use reset password instead." });
+    }
+    const passwordHash = await bcrypt_1.default.hash(parsed.data.password, 10);
+    const nextEmail = parsed.data.email?.trim();
+    if (nextEmail && nextEmail !== admin.email) {
+        const existing = await prisma_1.prisma.adminUser.findUnique({ where: { email: nextEmail } });
+        if (existing) {
+            return res.status(400).json({ message: "Email already in use." });
+        }
+    }
+    const updated = await prisma_1.prisma.adminUser.update({
+        where: { id: admin.id },
+        data: {
+            passwordHash,
+            ...(nextEmail && nextEmail !== admin.email ? { email: nextEmail } : {}),
+        },
+        select: { id: true, name: true, email: true, role: true, passwordHash: true },
+    });
+    return res.json({
+        admin: {
+            id: updated.id,
+            name: updated.name,
+            email: updated.email,
+            role: updated.role,
+            hasPassword: Boolean(updated.passwordHash),
+        },
+    });
 }

@@ -10,6 +10,7 @@ exports.authRouter.post("/login", auth_controller_1.login);
 exports.authRouter.post("/signup", auth_controller_1.signup);
 exports.authRouter.post("/password-reset/request", auth_controller_1.requestPasswordReset);
 exports.authRouter.post("/password-reset/confirm", auth_controller_1.confirmPasswordReset);
+exports.authRouter.post("/password/set", auth_1.requireAuth, auth_controller_1.setPassword);
 exports.authRouter.get("/me", auth_1.requireAuth, auth_controller_1.me);
 exports.authRouter.post("/logout", auth_controller_1.logout);
 exports.authRouter.get("/oauth/google", oauth_controller_1.startGoogleOAuth);

@@ -7,8 +7,10 @@ const client_1 = require("@prisma/client");
 const prisma_1 = require("../config/prisma");
 const PLAN_RANK = {
     [client_1.Plan.FREE]: 0,
-    [client_1.Plan.PRO]: 1,
-    [client_1.Plan.ENTERPRISE]: 2,
+    [client_1.Plan.STARTER]: 1,
+    [client_1.Plan.GROWTH]: 2,
+    [client_1.Plan.PRO]: 3,
+    [client_1.Plan.ENTERPRISE]: 4,
 };
 function pickBestPlan(plans) {
     if (!plans.length)

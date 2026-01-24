@@ -1,0 +1,11 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.seoRouter = void 0;
+const express_1 = require("express");
+const seo_controller_1 = require("../controllers/seo.controller");
+const auth_1 = require("../middlewares/auth");
+const site_1 = require("../middlewares/site");
+exports.seoRouter = (0, express_1.Router)();
+exports.seoRouter.post("/admin/seo/serp/analyze", auth_1.requireAuth, site_1.requireSiteAccess, seo_controller_1.triggerSerpAnalysis);
+exports.seoRouter.post("/admin/seo/content/analyze", auth_1.requireAuth, site_1.requireSiteAccess, seo_controller_1.analyzeContent);
+exports.seoRouter.post("/admin/seo/ai/suggest", auth_1.requireAuth, site_1.requireSiteAccess, seo_controller_1.suggestSeo);

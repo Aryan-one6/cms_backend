@@ -8,8 +8,8 @@ const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const prisma_1 = require("../config/prisma");
 async function main() {
-    const email = "connect@triadflair.com";
-    const password = "Admin@12345";
+    const email = process.env.SUPER_ADMIN_EMAIL || "connect@triadflair.com";
+    const password = process.env.SUPER_ADMIN_PASSWORD || "Aryan@321";
     const existing = await prisma_1.prisma.adminUser.findUnique({ where: { email } });
     if (existing) {
         console.log("Admin already exists:", email);

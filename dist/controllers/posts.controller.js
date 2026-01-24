@@ -18,6 +18,8 @@ exports.publicGetPostBySlug = publicGetPostBySlug;
 const zod_1 = require("zod");
 const slugify_1 = __importDefault(require("slugify"));
 const prisma_1 = require("../config/prisma");
+const storage_1 = require("../config/storage");
+const axios_1 = __importDefault(require("axios"));
 const client_1 = require("@prisma/client");
 const plans_1 = require("../config/plans");
 const accountSubscription_1 = require("../utils/accountSubscription");
@@ -28,6 +30,12 @@ const createSchema = zod_1.z.object({
     coverImageUrl: zod_1.z.string().optional(),
     contentHtml: zod_1.z.string().min(1),
     tags: zod_1.z.array(zod_1.z.string()).optional(), // tag names
+    primaryKeyword: zod_1.z.string().optional(),
+    secondaryKeywords: zod_1.z.array(zod_1.z.string()).optional(),
+    metaTitle: zod_1.z.string().optional(),
+    metaDescription: zod_1.z.string().optional(),
+    serpAnalysisId: zod_1.z.string().optional(),
+    seoScore: zod_1.z.number().int().min(0).max(100).optional(),
 });
 const updateSchema = createSchema.partial();
 const importPostSchema = zod_1.z.object({
@@ -36,10 +44,18 @@ const importPostSchema = zod_1.z.object({
     excerpt: zod_1.z.string().optional(),
     coverImageUrl: zod_1.z.string().optional(),
     coverImageAbsolute: zod_1.z.string().optional(),
+    coverImageData: zod_1.z.string().optional(), // base64 data URI or raw base64
+    coverImageMime: zod_1.z.string().optional(),
     contentHtml: zod_1.z.string().min(1),
     tags: zod_1.z.array(zod_1.z.string()).optional(),
     status: zod_1.z.enum(["DRAFT", "PUBLISHED"]).optional(),
     publishedAt: zod_1.z.string().datetime().optional(),
+    primaryKeyword: zod_1.z.string().optional(),
+    secondaryKeywords: zod_1.z.array(zod_1.z.string()).optional(),
+    metaTitle: zod_1.z.string().optional(),
+    metaDescription: zod_1.z.string().optional(),
+    serpAnalysisId: zod_1.z.string().optional(),
+    seoScore: zod_1.z.number().int().min(0).max(100).optional(),
 });
 const importSchema = zod_1.z.object({
     posts: zod_1.z.array(importPostSchema).min(1, "No posts provided"),
@@ -145,16 +161,35 @@ function normalizeImportPost(input) {
     const tags = tagsRaw
         ? tagsRaw.split(/[,|;]/).map((t) => t.trim()).filter(Boolean)
         : undefined;
+    const secondaryKeywordsRaw = get(["secondaryKeywords", "secondary_keywords", "SecondaryKeywords"]);
+    const secondaryKeywords = secondaryKeywordsRaw
+        ? secondaryKeywordsRaw.split(/[,|;]/).map((t) => t.trim()).filter(Boolean)
+        : undefined;
+    const primaryKeyword = get(["primaryKeyword", "PrimaryKeyword"]);
+    const metaTitle = get(["metaTitle", "MetaTitle"]);
+    const metaDescription = get(["metaDescription", "MetaDescription"]);
+    const serpAnalysisId = get(["serpAnalysisId", "SerpAnalysisId"]);
+    const seoScoreRaw = get(["seoScore", "SeoScore"]);
     const status = get(["status", "Status"]);
     const publishedAt = get(["publishedAt", "PublishedAt", "published_at"]);
+    const coverImageData = get(["coverImageData", "cover_image_data", "CoverImageData"]);
+    const coverImageMime = get(["coverImageMime", "cover_image_mime", "CoverImageMime"]);
     return {
         title,
         slug: get(["slug", "Slug"]),
         excerpt: get(["excerpt", "Excerpt"]),
         coverImageUrl: get(["coverImageUrl", "cover_image_url", "CoverImageUrl"]),
         coverImageAbsolute: get(["coverImageAbsolute", "cover_image_absolute", "CoverImageAbsolute"]),
+        coverImageData,
+        coverImageMime,
         contentHtml: get(["contentHtml", "content_html", "ContentHtml"]) || "<p></p>",
         tags,
+        primaryKeyword,
+        secondaryKeywords,
+        metaTitle,
+        metaDescription,
+        serpAnalysisId,
+        seoScore: seoScoreRaw ? Number(seoScoreRaw) : undefined,
         status,
         publishedAt,
     };
@@ -241,6 +276,20 @@ async function adminCreatePost(req, res) {
                 });
             }
         }
+        if (plan === client_1.Plan.STARTER) {
+            const startOfMonth = new Date();
+            startOfMonth.setDate(1);
+            startOfMonth.setHours(0, 0, 0, 0);
+            const monthlyPosts = await prisma_1.prisma.blogPost.count({
+                where: { siteId: site.siteId, createdAt: { gte: startOfMonth } },
+            });
+            if (monthlyPosts >= 15) {
+                return res.status(402).json({
+                    message: "Starter plan allows up to 15 posts per month. Upgrade for more.",
+                    plans: plans_1.PLANS.filter((p) => p.id !== "FREE"),
+                });
+            }
+        }
     }
     const post = await prisma_1.prisma.blogPost.create({
         data: {
@@ -251,6 +300,12 @@ async function adminCreatePost(req, res) {
             coverImageUrl: parsed.data.coverImageUrl,
             contentHtml: parsed.data.contentHtml,
             authorId: auth.adminId,
+            primaryKeyword: parsed.data.primaryKeyword,
+            secondaryKeywords: parsed.data.secondaryKeywords || [],
+            metaTitle: parsed.data.metaTitle,
+            metaDescription: parsed.data.metaDescription,
+            serpAnalysisId: parsed.data.serpAnalysisId,
+            seoScore: parsed.data.seoScore ?? 0,
         },
     });
     // tags
@@ -297,6 +352,12 @@ async function adminUpdatePost(req, res) {
             excerpt: parsed.data.excerpt ?? undefined,
             coverImageUrl: parsed.data.coverImageUrl ?? undefined,
             contentHtml: parsed.data.contentHtml ?? undefined,
+            primaryKeyword: parsed.data.primaryKeyword ?? undefined,
+            secondaryKeywords: parsed.data.secondaryKeywords ?? undefined,
+            metaTitle: parsed.data.metaTitle ?? undefined,
+            metaDescription: parsed.data.metaDescription ?? undefined,
+            serpAnalysisId: parsed.data.serpAnalysisId ?? undefined,
+            seoScore: parsed.data.seoScore ?? undefined,
         },
     });
     // replace tags if provided
@@ -361,13 +422,40 @@ async function adminExportPosts(req, res) {
         coverImageAbsolute: p.coverImageUrl && !/^https?:\/\//i.test(p.coverImageUrl)
             ? `${origin}${p.coverImageUrl}`
             : p.coverImageUrl,
+        // Will be populated below if fetch succeeds
+        coverImageData: undefined,
+        coverImageMime: undefined,
         contentHtml: p.contentHtml,
         tags: p.tags.map((t) => t.tag.name),
+        primaryKeyword: p.primaryKeyword,
+        secondaryKeywords: p.secondaryKeywords,
+        metaTitle: p.metaTitle,
+        metaDescription: p.metaDescription,
+        serpAnalysisId: p.serpAnalysisId,
+        seoScore: p.seoScore,
         status: p.status,
         publishedAt: p.publishedAt,
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
     }));
+    // Optionally embed image data for JSON exports
+    if (req.query.format !== "csv") {
+        for (const post of payload) {
+            if (!post.coverImageAbsolute)
+                continue;
+            try {
+                const resp = await axios_1.default.get(post.coverImageAbsolute, { responseType: "arraybuffer" });
+                const mime = resp.headers["content-type"] || "image/png";
+                const b64 = Buffer.from(resp.data).toString("base64");
+                post.coverImageData = b64;
+                post.coverImageMime = mime;
+            }
+            catch (err) {
+                // Ignore download errors; leave data undefined
+                continue;
+            }
+        }
+    }
     if (req.query.format === "csv") {
         const csv = postsToCsv(payload);
         res.setHeader("Content-Type", "text/csv");
@@ -432,17 +520,33 @@ async function adminImportPosts(req, res) {
         const slug = await ensureUniqueSlug(slugInput && slugInput.length ? slugInput : data.title, site.siteId);
         const status = data.status === "PUBLISHED" ? "PUBLISHED" : "DRAFT";
         const publishedAt = status === "PUBLISHED" ? (data.publishedAt ? new Date(data.publishedAt) : new Date()) : null;
+        let coverImageUrl = data.coverImageUrl || data.coverImageAbsolute;
+        // If base64 image data is provided, upload and use that
+        if (data.coverImageData) {
+            const base64 = data.coverImageData.replace(/^data:[^,]+,/, "");
+            const mime = data.coverImageMime || "image/png";
+            const buffer = Buffer.from(base64, "base64");
+            const key = (0, storage_1.buildUploadKey)(`${Date.now()}-imported-cover`);
+            const upload = await (0, storage_1.uploadToS3)({ fileBuffer: buffer, key, contentType: mime });
+            coverImageUrl = upload.url || upload.absoluteUrl;
+        }
         const post = await prisma_1.prisma.blogPost.create({
             data: {
                 siteId: site.siteId,
                 title: data.title,
                 slug,
                 excerpt: data.excerpt,
-                coverImageUrl: data.coverImageUrl || data.coverImageAbsolute,
+                coverImageUrl,
                 contentHtml: data.contentHtml,
                 authorId: auth.adminId,
                 status,
                 publishedAt,
+                primaryKeyword: data.primaryKeyword,
+                secondaryKeywords: data.secondaryKeywords || [],
+                metaTitle: data.metaTitle,
+                metaDescription: data.metaDescription,
+                serpAnalysisId: data.serpAnalysisId,
+                seoScore: data.seoScore ?? 0,
             },
         });
         if (data.tags?.length) {

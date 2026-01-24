@@ -78,6 +78,7 @@ model AdminUser {
   primarySiteId String?
   primarySite   Site?    @relation("PrimarySite", fields: [primarySiteId], references: [id])
   accountSubscription AccountSubscription?
+  serpAnalyses SerpAnalysis[]
 
   @@unique([oauthProvider, oauthSubject])
 }
@@ -94,6 +95,13 @@ model BlogPost {
   status        PostStatus @default(DRAFT)
   publishedAt   DateTime?
   imageGenCount Int        @default(0)
+  primaryKeyword    String?
+  secondaryKeywords String[] @default([])
+  metaTitle         String?
+  metaDescription   String?
+  serpAnalysisId    String?
+  serpAnalysis      SerpAnalysis? @relation(fields: [serpAnalysisId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  seoScore          Int        @default(0)
 
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
@@ -147,6 +155,7 @@ model Site {
   apiTokens      ApiToken[]
   siteDomains    SiteDomain[]
   primaryFor     AdminUser[]            @relation("PrimarySite")
+  serpAnalyses   SerpAnalysis[]
 }
 
 model AccountSubscription {
@@ -197,6 +206,26 @@ model ApiToken {
   createdAt  DateTime     @default(now())
 
   site       Site @relation(fields: [siteId], references: [id])
+}
+
+model SerpAnalysis {
+  id           String    @id @default(cuid())
+  siteId       String
+  site         Site      @relation(fields: [siteId], references: [id])
+  createdById  String?
+  createdBy    AdminUser? @relation(fields: [createdById], references: [id])
+  keyword      String
+  location     String
+  language     String
+  competitors  Json
+  benchmarks   Json
+  nlpTerms     Json
+  createdAt    DateTime  @default(now())
+  expiresAt    DateTime
+  blogPosts    BlogPost[]
+
+  @@index([siteId, keyword, location, language])
+  @@index([expiresAt])
 }
 
 model SiteDomain {
